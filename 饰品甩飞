@@ -1,27 +1,164 @@
--- Uhhhhhh Reanimate - PhysicsRepRootPart 无碰撞箱甩飞系统
+-- Uhhhhhh Reanimate - PhysicsRepRootPart 甩飞系统
+-- 现代化UI界面 | 可拖动 | 可缩放 | 动画效果 | 类似SigmaSpy风格
 -- 仅供教育研究目的
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 
--- 配置参数
+-- ========== 配置系统 ==========
 local Settings = {
-    FlingPower = 16384,          -- 甩飞力量
-    FlingHeight = 5,             -- 初始高度
-    TargetDistance = 50,         -- 目标检测距离
-    UsePrediction = true,        -- 使用预测算法
-    PredictionTime = 0.2,        -- 预测时间（秒）
-    RotationSpeed = 500,         -- 旋转速度
-    AutoTarget = true,           -- 自动选择目标
-    TargetSpecificPlayer = "",   -- 指定目标玩家名称
-    UseHatFling = false,         -- 使用帽子模式（需要帽子）
-    Cooldown = 1,                -- 冷却时间（秒）
+    FlingPower = 16384,
+    FlingHeight = 5,
+    TargetDistance = 50,
+    UsePrediction = true,
+    PredictionTime = 0.2,
+    RotationSpeed = 500,
+    AutoTarget = true,
+    TargetSpecificPlayer = "",
+    UseHatFling = false,
+    Cooldown = 1,
+    UIScale = 1,
+    Theme = "Dark", -- Dark, Purple, Blue, Red
+    AnimationSpeed = 0.3,
+    AutoClose = true,
 }
 
--- 工具类函数
+-- ========== UI管理器 ==========
+local UIManager = {
+    MainScreenGui = nil,
+    Dragging = false,
+    DragStartPos = nil,
+    UIStartPos = nil,
+    IsScaling = false,
+    ScaleStartPos = nil,
+    OriginalSize = nil,
+    Elements = {},
+    ActiveTweens = {},
+}
+
+-- ========== 动画效果库 ==========
+local Animations = {
+    -- 缓动函数
+    EasingStyles = {
+        Linear = Enum.EasingStyle.Linear,
+        Quad = Enum.EasingStyle.Quad,
+        Cubic = Enum.EasingStyle.Cubic,
+        Quart = Enum.EasingStyle.Quart,
+        Quint = Enum.EasingStyle.Quint,
+        Sine = Enum.EasingStyle.Sine,
+        Expo = Enum.EasingStyle.Exponential,
+        Circ = Enum.EasingStyle.Circular,
+        Elastic = Enum.EasingStyle.Elastic,
+        Back = Enum.EasingStyle.Back,
+        Bounce = Enum.EasingStyle.Bounce
+    },
+    
+    -- 缓动方向
+    EasingDirections = {
+        In = Enum.EasingDirection.In,
+        Out = Enum.EasingDirection.Out,
+        InOut = Enum.EasingDirection.InOut
+    },
+    
+    -- 创建动画
+    CreateTween = function(object, properties, duration, easingStyle, easingDirection)
+        local tweenInfo = TweenInfo.new(
+            duration or 0.3,
+            easingStyle or Enum.EasingStyle.Quad,
+            easingDirection or Enum.EasingDirection.Out,
+            0,
+            false,
+            0
+        )
+        local tween = TweenService:Create(object, tweenInfo, properties)
+        return tween
+    end,
+    
+    -- 按钮悬停效果
+    ButtonHover = function(button, isHovering)
+        if not button then return end
+        
+        local targetColor
+        if isHovering then
+            targetColor = Color3.fromRGB(80, 80, 80)
+        else
+            targetColor = Color3.fromRGB(60, 60, 60)
+        end
+        
+        Animations.CreateTween(button, {BackgroundColor3 = targetColor}, 0.15):Play()
+    end,
+    
+    -- 按钮点击效果
+    ButtonClick = function(button)
+        if not button then return end
+        
+        local originalColor = button.BackgroundColor3
+        local originalSize = button.Size
+        
+        Animations.CreateTween(button, {BackgroundColor3 = Color3.fromRGB(100, 100, 100)}, 0.1):Play()
+        Animations.CreateTween(button, {Size = originalSize * UDim2.new(0.95, 0, 0.95, 0)}, 0.1):Play()
+        
+        task.delay(0.1, function()
+            Animations.CreateTween(button, {BackgroundColor3 = originalColor}, 0.1):Play()
+            Animations.CreateTween(button, {Size = originalSize}, 0.1):Play()
+        end)
+    end,
+    
+    -- 开关切换动画
+    ToggleSwitch = function(toggleButton, isOn)
+        local targetColor
+        local targetPosition
+        
+        if isOn then
+            targetColor = Color3.fromRGB(0, 170, 255)
+            targetPosition = UDim2.new(0.7, 0, 0.15, 0)
+        else
+            targetColor = Color3.fromRGB(100, 100, 100)
+            targetPosition = UDim2.new(0.1, 0, 0.15, 0)
+        end
+        
+        Animations.CreateTween(toggleButton, {BackgroundColor3 = targetColor}, 0.2):Play()
+        Animations.CreateTween(toggleButton, {Position = targetPosition}, 0.2):Play()
+    end,
+    
+    -- 页面切换动画
+    PageTransition = function(oldPage, newPage)
+        if oldPage then
+            Animations.CreateTween(oldPage, {Position = UDim2.new(-1, 0, 0, 0)}, 0.3):Play()
+        end
+        
+        newPage.Position = UDim2.new(1, 0, 0, 0)
+        Animations.CreateTween(newPage, {Position = UDim2.new(0, 0, 0, 0)}, 0.3):Play()
+    end,
+    
+    -- 数值滑块动画
+    SliderFill = function(fill, value)
+        Animations.CreateTween(fill, {Size = UDim2.new(value, 0, 1, 0)}, 0.2):Play()
+    end,
+    
+    -- 通知动画
+    Notification = function(frame)
+        frame.Position = UDim2.new(0.5, 0, -1, 0)
+        frame.Visible = true
+        
+        Animations.CreateTween(frame, {Position = UDim2.new(0.5, 0, 0.05, 0)}, 0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out):Play()
+        
+        task.delay(3, function()
+            Animations.CreateTween(frame, {Position = UDim2.new(0.5, 0, -1, 0)}, 0.5, Enum.EasingStyle.Back, Enum.EasingDirection.In):Play()
+            task.delay(0.5, function()
+                frame.Visible = false
+            end)
+        end)
+    end
+}
+
+-- ========== 工具函数 ==========
 local Utils = {}
 
 -- 预测算法
@@ -34,13 +171,11 @@ function Utils.PredictPosition(targetPart, timeOffset)
     local velocity = targetPart.AssemblyLinearVelocity or Vector3.new()
     local gravity = Workspace.Gravity
     
-    -- 基础预测：位置 = 当前位置 + 速度 * 时间
+    -- 基础预测
     local predictedPos = currentPos + velocity * timeOffset
-    
-    -- 考虑重力影响
     predictedPos = predictedPos + Vector3.new(0, -gravity * 0.5 * timeOffset * timeOffset, 0)
     
-    -- 添加随机扰动避免过于规律
+    -- 随机扰动
     local randomOffset = Vector3.new(
         math.random(-10, 10) * 0.01,
         math.random(-5, 5) * 0.01,
@@ -84,38 +219,54 @@ function Utils.GetSpecificPlayer(name)
     return nil
 end
 
--- 主甩飞类
-local PhysicsFling = {}
+-- 生成随机ID
+function Utils.GenerateID(length)
+    local characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+    local result = ""
+    
+    for i = 1, length or 8 do
+        local randomIndex = math.random(1, #characters)
+        result = result .. string.sub(characters, randomIndex, randomIndex)
+    end
+    
+    return result
+end
+
+-- ========== 甩飞系统 ==========
+local PhysicsFling = {
+    RootPart = nil,
+    Humanoid = nil,
+    HatHandle = nil,
+    LastFlingTime = 0,
+    IsActive = false,
+    Connection = nil
+}
 
 function PhysicsFling:Initialize()
     self.RootPart = Character:WaitForChild("HumanoidRootPart")
     self.Humanoid = Character:WaitForChild("Humanoid")
     self.LastFlingTime = 0
     
-    -- 如果是帽子模式，准备帽子
     if Settings.UseHatFling and Character:FindFirstChildOfClass("Accessory") then
         self.HatHandle = Character:FindFirstChildOfClass("Accessory").Handle
     else
         self.HatHandle = nil
     end
-    
-    print("[PhysicsFling] 初始化完成 - 模式:", Settings.UseHatFling and "帽子模式" or "肢体模式")
 end
 
--- 核心甩飞函数
 function PhysicsFling:ExecuteFling(targetPlayer)
     if tick() - self.LastFlingTime < Settings.Cooldown then
         return
     end
     
     if not targetPlayer or not targetPlayer.Character then
-        warn("[PhysicsFling] 无效目标")
+        UIManager:ShowNotification("无效目标")
         return
     end
     
     local targetRoot = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not targetRoot then
-        warn("[PhysicsFling] 目标没有HumanoidRootPart")
+        UIManager:ShowNotification("目标没有HumanoidRootPart")
         return
     end
     
@@ -125,7 +276,7 @@ function PhysicsFling:ExecuteFling(targetPlayer)
         targetPosition = Utils.PredictPosition(targetRoot, Settings.PredictionTime)
     end
     
-    -- 计算甩飞的CFrame（在目标上方）
+    -- 计算甩飞的CFrame
     local flingCFrame = CFrame.new(
         targetPosition + Vector3.new(0, Settings.FlingHeight, 0)
     ) * CFrame.Angles(
@@ -137,7 +288,7 @@ function PhysicsFling:ExecuteFling(targetPlayer)
     -- 计算甩飞速度
     local flingVelocity = Vector3.new(
         math.random(-100, 100),
-        -Settings.FlingPower,  -- 主要向下力
+        -Settings.FlingPower,
         math.random(-100, 100)
     )
     
@@ -147,38 +298,31 @@ function PhysicsFling:ExecuteFling(targetPlayer)
         Settings.RotationSpeed
     )
     
-    -- 核心：设置PhysicsRepRootPart并应用力
-    if Settings.UseHatFling and self.HatHandle then
-        -- 帽子模式
-        pcall(function()
-            -- 设置PhysicsRepRootPart为目标
+    -- 执行甩飞
+    local success, err = pcall(function()
+        if Settings.UseHatFling and self.HatHandle then
+            -- 帽子模式
             self.HatHandle:SetAttribute("PhysicsRepRootPart", targetRoot)
-            
-            -- 对帽子施加力
             self.HatHandle.AssemblyLinearVelocity = flingVelocity
             self.HatHandle.AssemblyAngularVelocity = flingRotVelocity
             self.HatHandle.CFrame = flingCFrame
-            
-            print("[PhysicsFling] 帽子甩飞执行于:", targetPlayer.Name)
-        end)
-    else
-        -- 肢体模式（直接控制自己的RootPart）
-        pcall(function()
-            -- 关键步骤：建立物理同步链路
+        else
+            -- 肢体模式
             self.RootPart:SetAttribute("PhysicsRepRootPart", targetRoot)
-            
-            -- 对自己RootPart施加剧烈运动
             self.RootPart.CFrame = flingCFrame
             self.RootPart.Velocity = flingVelocity
             self.RootPart.RotVelocity = flingRotVelocity
-            
-            print("[PhysicsFling] 肢体甩飞执行于:", targetPlayer.Name)
-        end)
+        end
+    end)
+    
+    if success then
+        UIManager:ShowNotification("甩飞成功: " .. targetPlayer.Name)
+        self.LastFlingTime = tick()
+    else
+        UIManager:ShowNotification("甩飞失败: " .. err)
     end
     
-    self.LastFlingTime = tick()
-    
-    -- 短暂延迟后清除PhysicsRepRootPart（避免持续控制）
+    -- 清理
     task.delay(0.1, function()
         pcall(function()
             if Settings.UseHatFling and self.HatHandle then
@@ -190,9 +334,11 @@ function PhysicsFling:ExecuteFling(targetPlayer)
     end)
 end
 
--- 自动甩飞循环
 function PhysicsFling:StartAutoFling()
-    self.AutoFlingConnection = RunService.Heartbeat:Connect(function()
+    if self.IsActive then return end
+    
+    self.IsActive = true
+    self.Connection = RunService.Heartbeat:Connect(function()
         local target = nil
         
         if Settings.TargetSpecificPlayer ~= "" then
@@ -206,16 +352,16 @@ function PhysicsFling:StartAutoFling()
         end
     end)
     
-    print("[PhysicsFling] 自动甩飞已启动")
+    UIManager:ShowNotification("自动甩飞已启动")
 end
 
 function PhysicsFling:Stop()
-    if self.AutoFlingConnection then
-        self.AutoFlingConnection:Disconnect()
-        self.AutoFlingConnection = nil
+    self.IsActive = false
+    if self.Connection then
+        self.Connection:Disconnect()
+        self.Connection = nil
     end
     
-    -- 清理PhysicsRepRootPart
     pcall(function()
         if self.RootPart then
             self.RootPart:SetAttribute("PhysicsRepRootPart", nil)
@@ -225,183 +371,594 @@ function PhysicsFling:Stop()
         end
     end)
     
-    print("[PhysicsFling] 已停止")
+    UIManager:ShowNotification("自动甩飞已停止")
 end
 
--- UI控制界面
-local function CreateControlUI()
-    local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "PhysicsFlingUI"
-    ScreenGui.Parent = game.CoreGui
+-- ========== UI创建器 ==========
+function UIManager:CreateModernUI()
+    -- 清理现有UI
+    if self.MainScreenGui then
+        self.MainScreenGui:Destroy()
+    end
     
-    local MainFrame = Instance.new("Frame")
-    MainFrame.Size = UDim2.new(0, 300, 0, 400)
-    MainFrame.Position = UDim2.new(0, 10, 0, 10)
-    MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-    MainFrame.BorderSizePixel = 2
-    MainFrame.BorderColor3 = Color3.fromRGB(60, 60, 60)
-    MainFrame.Parent = ScreenGui
+    -- 创建主GUI
+    self.MainScreenGui = Instance.new("ScreenGui")
+    self.MainScreenGui.Name = "SigmaFlingUI_" .. Utils.GenerateID(8)
+    self.MainScreenGui.ResetOnSpawn = false
+    self.MainScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    self.MainScreenGui.Parent = game.CoreGui
     
-    local Title = Instance.new("TextLabel")
-    Title.Text = "PhysicsRepRootPart 甩飞系统"
-    Title.Size = UDim2.new(1, 0, 0, 30)
-    Title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    Title.TextColor3 = Color3.fromRGB(255, 100, 100)
-    Title.Font = Enum.Font.SourceSansBold
-    Title.Parent = MainFrame
+    -- 主题颜色
+    local ThemeColors = {
+        Dark = {
+            Primary = Color3.fromRGB(25, 25, 25),
+            Secondary = Color3.fromRGB(40, 40, 40),
+            Accent = Color3.fromRGB(0, 170, 255),
+            Text = Color3.fromRGB(240, 240, 240),
+            Border = Color3.fromRGB(60, 60, 60)
+        },
+        Purple = {
+            Primary = Color3.fromRGB(30, 20, 40),
+            Secondary = Color3.fromRGB(50, 35, 70),
+            Accent = Color3.fromRGB(180, 80, 255),
+            Text = Color3.fromRGB(240, 240, 240),
+            Border = Color3.fromRGB(80, 60, 100)
+        },
+        Blue = {
+            Primary = Color3.fromRGB(20, 25, 45),
+            Secondary = Color3.fromRGB(35, 45, 75),
+            Accent = Color3.fromRGB(100, 180, 255),
+            Text = Color3.fromRGB(240, 240, 240),
+            Border = Color3.fromRGB(60, 80, 120)
+        },
+        Red = {
+            Primary = Color3.fromRGB(40, 20, 20),
+            Secondary = Color3.fromRGB(70, 35, 35),
+            Accent = Color3.fromRGB(255, 80, 80),
+            Text = Color3.fromRGB(240, 240, 240),
+            Border = Color3.fromRGB(100, 60, 60)
+        }
+    }
     
-    -- 配置选项
-    local yOffset = 40
-    local function CreateOption(labelText, valueName, defaultValue, isString)
-        local frame = Instance.new("Frame")
-        frame.Size = UDim2.new(1, -20, 0, 25)
-        frame.Position = UDim2.new(0, 10, 0, yOffset)
-        frame.BackgroundTransparency = 1
-        frame.Parent = MainFrame
+    local CurrentTheme = ThemeColors[Settings.Theme] or ThemeColors.Dark
+    
+    -- 主窗口
+    local MainWindow = Instance.new("Frame")
+    MainWindow.Name = "MainWindow"
+    MainWindow.Size = UDim2.new(0, 450, 0, 550)
+    MainWindow.Position = UDim2.new(0.5, -225, 0.5, -275)
+    MainWindow.BackgroundColor3 = CurrentTheme.Primary
+    MainWindow.BorderSizePixel = 1
+    MainWindow.BorderColor3 = CurrentTheme.Border
+    MainWindow.ClipsDescendants = true
+    MainWindow.Parent = self.MainScreenGui
+    self.Elements.MainWindow = MainWindow
+    
+    -- 窗口圆角
+    local UICorner = Instance.new("UICorner")
+    UICorner.CornerRadius = UDim.new(0, 8)
+    UICorner.Parent = MainWindow
+    
+    -- 标题栏
+    local TitleBar = Instance.new("Frame")
+    TitleBar.Name = "TitleBar"
+    TitleBar.Size = UDim2.new(1, 0, 0, 40)
+    TitleBar.BackgroundColor3 = CurrentTheme.Secondary
+    TitleBar.BorderSizePixel = 0
+    TitleBar.Parent = MainWindow
+    self.Elements.TitleBar = TitleBar
+    
+    local TitleBarCorner = Instance.new("UICorner")
+    TitleBarCorner.CornerRadius = UDim.new(0, 8, 0, 0)
+    TitleBarCorner.Parent = TitleBar
+    
+    -- 标题文字
+    local TitleLabel = Instance.new("TextLabel")
+    TitleLabel.Name = "TitleLabel"
+    TitleLabel.Size = UDim2.new(0, 200, 1, 0)
+    TitleLabel.Position = UDim2.new(0, 15, 0, 0)
+    TitleLabel.BackgroundTransparency = 1
+    TitleLabel.Text = "Sigma Fling V2.0"
+    TitleLabel.TextColor3 = CurrentTheme.Accent
+    TitleLabel.Font = Enum.Font.GothamBold
+    TitleLabel.TextSize = 20
+    TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    TitleLabel.Parent = TitleBar
+    
+    -- 副标题
+    local SubtitleLabel = Instance.new("TextLabel")
+    SubtitleLabel.Name = "SubtitleLabel"
+    SubtitleLabel.Size = UDim2.new(0, 200, 0, 15)
+    SubtitleLabel.Position = UDim2.new(0, 15, 0, 25)
+    SubtitleLabel.BackgroundTransparency = 1
+    SubtitleLabel.Text = "PhysicsRepRootPart System"
+    SubtitleLabel.TextColor3 = CurrentTheme.Text
+    SubtitleLabel.Font = Enum.Font.Gotham
+    SubtitleLabel.TextSize = 12
+    SubtitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    SubtitleLabel.TextTransparency = 0.5
+    SubtitleLabel.Parent = TitleBar
+    
+    -- 控制按钮
+    local ControlButtons = {
+        {Name = "Minimize", Icon = "_"},
+        {Name = "Maximize", Icon = "□"},
+        {Name = "Close", Icon = "X"}
+    }
+    
+    for i, buttonInfo in ipairs(ControlButtons) do
+        local ControlButton = Instance.new("TextButton")
+        ControlButton.Name = buttonInfo.Name .. "Button"
+        ControlButton.Size = UDim2.new(0, 30, 0, 30)
+        ControlButton.Position = UDim2.new(1, -40 * (4 - i), 0.5, -15)
+        ControlButton.BackgroundColor3 = CurrentTheme.Primary
+        ControlButton.Text = buttonInfo.Icon
+        ControlButton.TextColor3 = CurrentTheme.Text
+        ControlButton.Font = Enum.Font.GothamBold
+        ControlButton.TextSize = 14
+        ControlButton.BorderSizePixel = 0
+        ControlButton.Parent = TitleBar
         
-        local label = Instance.new("TextLabel")
-        label.Text = labelText
-        label.Size = UDim2.new(0.6, 0, 1, 0)
-        label.TextColor3 = Color3.fromRGB(200, 200, 200)
-        label.TextXAlignment = Enum.TextXAlignment.Left
-        label.BackgroundTransparency = 1
-        label.Parent = frame
+        local ButtonCorner = Instance.new("UICorner")
+        ButtonCorner.CornerRadius = UDim.new(0, 4)
+        ButtonCorner.Parent = ControlButton
         
-        local textBox = Instance.new("TextBox")
-        textBox.Size = UDim2.new(0.4, 0, 1, 0)
-        textBox.Position = UDim2.new(0.6, 0, 0, 0)
-        textBox.Text = tostring(defaultValue)
-        textBox.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-        textBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-        textBox.Parent = frame
+        ControlButton.MouseEnter:Connect(function()
+            Animations.ButtonHover(ControlButton, true)
+        end)
         
-        textBox.FocusLost:Connect(function()
-            if isString then
-                Settings[valueName] = textBox.Text
-            else
-                Settings[valueName] = tonumber(textBox.Text) or defaultValue
+        ControlButton.MouseLeave:Connect(function()
+            Animations.ButtonHover(ControlButton, false)
+        end)
+        
+        ControlButton.MouseButton1Click:Connect(function()
+            Animations.ButtonClick(ControlButton)
+            
+            if buttonInfo.Name == "Close" then
+                self:ToggleUI()
+            elseif buttonInfo.Name == "Minimize" then
+                self:ToggleMinimize()
+            end
+        end)
+    end
+    
+    -- 标签栏
+    local TabContainer = Instance.new("Frame")
+    TabContainer.Name = "TabContainer"
+    TabContainer.Size = UDim2.new(1, 0, 0, 50)
+    TabContainer.Position = UDim2.new(0, 0, 0, 40)
+    TabContainer.BackgroundColor3 = CurrentTheme.Primary
+    TabContainer.BorderSizePixel = 0
+    TabContainer.Parent = MainWindow
+    self.Elements.TabContainer = TabContainer
+    
+    -- 标签按钮
+    local Tabs = {
+        {Name = "Main", Icon = "⚡"},
+        {Name = "Settings", Icon = "⚙️"},
+        {Name = "Visual", Icon = "🎨"},
+        {Name = "Players", Icon = "👤"},
+        {Name = "Credits", Icon = "💎"}
+    }
+    
+    local TabButtons = {}
+    for i, tab in ipairs(Tabs) do
+        local TabButton = Instance.new("TextButton")
+        TabButton.Name = tab.Name .. "Tab"
+        TabButton.Size = UDim2.new(1 / #Tabs, 0, 1, 0)
+        TabButton.Position = UDim2.new((i - 1) / #Tabs, 0, 0, 0)
+        TabButton.BackgroundColor3 = CurrentTheme.Primary
+        TabButton.Text = tab.Icon .. " " .. tab.Name
+        TabButton.TextColor3 = CurrentTheme.Text
+        TabButton.Font = Enum.Font.Gotham
+        TabButton.TextSize = 12
+        TabButton.BorderSizePixel = 0
+        TabButton.Parent = TabContainer
+        
+        local TabUnderline = Instance.new("Frame")
+        TabUnderline.Name = "Underline"
+        TabUnderline.Size = UDim2.new(1, 0, 0, 3)
+        TabUnderline.Position = UDim2.new(0, 0, 1, -3)
+        TabUnderline.BackgroundColor3 = CurrentTheme.Accent
+        TabUnderline.BorderSizePixel = 0
+        TabUnderline.Visible = i == 1
+        TabUnderline.Parent = TabButton
+        
+        TabButton.MouseEnter:Connect(function()
+            if not TabUnderline.Visible then
+                Animations.CreateTween(TabButton, {BackgroundColor3 = CurrentTheme.Secondary}, 0.2):Play()
             end
         end)
         
-        yOffset = yOffset + 30
-    end
-    
-    -- 创建配置项
-    CreateOption("甩飞力量:", "FlingPower", 16384)
-    CreateOption("目标距离:", "TargetDistance", 50)
-    CreateOption("预测时间:", "PredictionTime", 0.2)
-    CreateOption("指定玩家:", "TargetSpecificPlayer", "")
-    
-    -- 开关选项
-    local function CreateToggle(labelText, valueName, defaultValue)
-        local frame = Instance.new("Frame")
-        frame.Size = UDim2.new(1, -20, 0, 25)
-        frame.Position = UDim2.new(0, 10, 0, yOffset)
-        frame.BackgroundTransparency = 1
-        frame.Parent = MainFrame
-        
-        local label = Instance.new("TextLabel")
-        label.Text = labelText
-        label.Size = UDim2.new(0.7, 0, 1, 0)
-        label.TextColor3 = Color3.fromRGB(200, 200, 200)
-        label.TextXAlignment = Enum.TextXAlignment.Left
-        label.BackgroundTransparency = 1
-        label.Parent = frame
-        
-        local toggle = Instance.new("TextButton")
-        toggle.Size = UDim2.new(0.3, 0, 1, 0)
-        toggle.Position = UDim2.new(0.7, 0, 0, 0)
-        toggle.Text = defaultValue and "ON" or "OFF"
-        toggle.BackgroundColor3 = defaultValue and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 0, 0)
-        toggle.TextColor3 = Color3.fromRGB(255, 255, 255)
-        toggle.Parent = frame
-        
-        toggle.MouseButton1Click:Connect(function()
-            Settings[valueName] = not Settings[valueName]
-            toggle.Text = Settings[valueName] and "ON" or "OFF"
-            toggle.BackgroundColor3 = Settings[valueName] and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 0, 0)
+        TabButton.MouseLeave:Connect(function()
+            if not TabUnderline.Visible then
+                Animations.CreateTween(TabButton, {BackgroundColor3 = CurrentTheme.Primary}, 0.2):Play()
+            end
         end)
         
-        yOffset = yOffset + 30
+        TabButton.MouseButton1Click:Connect(function()
+            self:SwitchTab(tab.Name)
+            for _, btn in pairs(TabButtons) do
+                btn.Underline.Visible = false
+                Animations.CreateTween(btn, {BackgroundColor3 = CurrentTheme.Primary}, 0.2):Play()
+            end
+            TabUnderline.Visible = true
+            Animations.CreateTween(TabButton, {BackgroundColor3 = CurrentTheme.Secondary}, 0.2):Play()
+        end)
+        
+        TabButtons[tab.Name] = TabButton
     end
     
-    CreateToggle("自动目标:", "AutoTarget", true)
-    CreateToggle("使用预测:", "UsePrediction", true)
-    CreateToggle("帽子模式:", "UseHatFling", false)
+    -- 页面容器
+    local PagesContainer = Instance.new("Frame")
+    PagesContainer.Name = "PagesContainer"
+    PagesContainer.Size = UDim2.new(1, -20, 1, -110)
+    PagesContainer.Position = UDim2.new(0, 10, 0, 90)
+    PagesContainer.BackgroundTransparency = 1
+    PagesContainer.ClipsDescendants = true
+    PagesContainer.Parent = MainWindow
+    self.Elements.PagesContainer = PagesContainer
     
-    -- 控制按钮
-    local StartButton = Instance.new("TextButton")
-    StartButton.Text = "启动自动甩飞"
-    StartButton.Size = UDim2.new(1, -20, 0, 30)
-    StartButton.Position = UDim2.new(0, 10, 0, yOffset + 10)
-    StartButton.BackgroundColor3 = Color3.fromRGB(0, 120, 0)
-    StartButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    StartButton.Parent = MainFrame
+    -- 创建页面
+    self:CreateMainPage(PagesContainer, CurrentTheme)
+    self:CreateSettingsPage(PagesContainer, CurrentTheme)
+    self:CreateVisualPage(PagesContainer, CurrentTheme)
+    self:CreatePlayersPage(PagesContainer, CurrentTheme)
+    self:CreateCreditsPage(PagesContainer, CurrentTheme)
     
-    local StopButton = Instance.new("TextButton")
-    StopButton.Text = "停止"
-    StopButton.Size = UDim2.new(1, -20, 0, 30)
-    StopButton.Position = UDim2.new(0, 10, 0, yOffset + 50)
-    StopButton.BackgroundColor3 = Color3.fromRGB(120, 0, 0)
-    StopButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    StopButton.Parent = MainFrame
+    -- 通知系统
+    local NotificationFrame = Instance.new("Frame")
+    NotificationFrame.Name = "Notification"
+    NotificationFrame.Size = UDim2.new(0.8, 0, 0, 40)
+    NotificationFrame.Position = UDim2.new(0.5, 0, -1, 0)
+    NotificationFrame.AnchorPoint = Vector2.new(0.5, 0)
+    NotificationFrame.BackgroundColor3 = CurrentTheme.Secondary
+    NotificationFrame.BorderSizePixel = 0
+    NotificationFrame.Visible = false
+    NotificationFrame.Parent = self.MainScreenGui
     
-    -- 单次甩飞按钮
-    local SingleFlingButton = Instance.new("TextButton")
-    SingleFlingButton.Text = "甩飞最近玩家"
-    SingleFlingButton.Size = UDim2.new(1, -20, 0, 30)
-    SingleFlingButton.Position = UDim2.new(0, 10, 0, yOffset + 90)
-    SingleFlingButton.BackgroundColor3 = Color3.fromRGB(0, 0, 120)
-    SingleFlingButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    SingleFlingButton.Parent = MainFrame
+    local NotificationCorner = Instance.new("UICorner")
+    NotificationCorner.CornerRadius = UDim.new(0, 8)
+    NotificationCorner.Parent = NotificationFrame
     
-    return ScreenGui, StartButton, StopButton, SingleFlingButton
+    local NotificationLabel = Instance.new("TextLabel")
+    NotificationLabel.Size = UDim2.new(1, -20, 1, 0)
+    NotificationLabel.Position = UDim2.new(0, 10, 0, 0)
+    NotificationLabel.BackgroundTransparency = 1
+    NotificationLabel.Text = ""
+    NotificationLabel.TextColor3 = CurrentTheme.Text
+    NotificationLabel.Font = Enum.Font.Gotham
+    NotificationLabel.TextSize = 14
+    NotificationLabel.TextXAlignment = Enum.TextXAlignment.Left
+    NotificationLabel.Parent = NotificationFrame
+    
+    self.Elements.NotificationFrame = NotificationFrame
+    self.Elements.NotificationLabel = NotificationLabel
+    
+    -- 设置拖动功能
+    self:SetupDragAndScale(TitleBar, MainWindow)
+    
+    -- 显示UI
+    self:ShowUI()
 end
 
--- 主执行函数
+function UIManager:CreateMainPage(parent, theme)
+    local MainPage = Instance.new("Frame")
+    MainPage.Name = "MainPage"
+    MainPage.Size = UDim2.new(1, 0, 1, 0)
+    MainPage.BackgroundTransparency = 1
+    MainPage.Visible = true
+    MainPage.Parent = parent
+    self.Elements.MainPage = MainPage
+    
+    -- 大按钮容器
+    local ButtonGrid = Instance.new("Frame")
+    ButtonGrid.Name = "ButtonGrid"
+    ButtonGrid.Size = UDim2.new(1, 0, 0, 200)
+    ButtonGrid.Position = UDim2.new(0, 0, 0, 10)
+    ButtonGrid.BackgroundTransparency = 1
+    ButtonGrid.Parent = MainPage
+    
+    -- 大按钮
+    local BigButtons = {
+        {Name = "Start Auto", Icon = "▶️", Color = Color3.fromRGB(0, 200, 100)},
+        {Name = "Stop Auto", Icon = "⏹️", Color = Color3.fromRGB(200, 0, 50)},
+        {Name = "Fling Nearest", Icon = "⚡", Color = theme.Accent},
+        {Name = "Emergency Stop", Icon = "🛑", Color = Color3.fromRGB(255, 100, 0)}
+    }
+    
+    for i = 1, 4 do
+        local row = math.ceil(i / 2)
+        local col = (i - 1) % 2
+        
+        local BigButton = Instance.new("TextButton")
+        BigButton.Name = BigButtons[i].Name
+        BigButton.Size = UDim2.new(0.48, 0, 0, 90)
+        BigButton.Position = UDim2.new(col * 0.5, 10, 0, (row - 1) * 100 + 10)
+        BigButton.BackgroundColor3 = BigButtons[i].Color
+        BigButton.Text = BigButtons[i].Icon .. "\n" .. BigButtons[i].Name
+        BigButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+        BigButton.Font = Enum.Font.GothamBold
+        BigButton.TextSize = 16
+        BigButton.TextWrapped = true
+        BigButton.BorderSizePixel = 0
+        BigButton.Parent = ButtonGrid
+        
+        local ButtonCorner = Instance.new("UICorner")
+        ButtonCorner.CornerRadius = UDim.new(0, 12)
+        ButtonCorner.Parent = BigButton
+        
+        -- 按钮效果
+        BigButton.MouseEnter:Connect(function()
+            Animations.CreateTween(BigButton, {Size = BigButton.Size * UDim2.new(1.05, 0, 1.05, 0)}, 0.2):Play()
+        end)
+        
+        BigButton.MouseLeave:Connect(function()
+            Animations.CreateTween(BigButton, {Size = UDim2.new(0.48, 0, 0, 90)}, 0.2):Play()
+        end)
+        
+        BigButton.MouseButton1Click:Connect(function()
+            Animations.ButtonClick(BigButton)
+            
+            if BigButtons[i].Name == "Start Auto" then
+                PhysicsFling:StartAutoFling()
+            elseif BigButtons[i].Name == "Stop Auto" then
+                PhysicsFling:Stop()
+            elseif BigButtons[i].Name == "Fling Nearest" then
+                local target = Utils.GetNearestPlayer()
+                if target then
+                    PhysicsFling:ExecuteFling(target)
+                else
+                    self:ShowNotification("附近没有玩家")
+                end
+            elseif BigButtons[i].Name == "Emergency Stop" then
+                PhysicsFling:Stop()
+                self:ShowNotification("紧急停止")
+            end
+        end)
+    end
+    
+    -- 状态显示
+    local StatusFrame = Instance.new("Frame")
+    StatusFrame.Name = "StatusFrame"
+    StatusFrame.Size = UDim2.new(1, 0, 0, 120)
+    StatusFrame.Position = UDim2.new(0, 0, 0, 220)
+    StatusFrame.BackgroundColor3 = theme.Secondary
+    StatusFrame.BorderSizePixel = 0
+    StatusFrame.Parent = MainPage
+    
+    local StatusCorner = Instance.new("UICorner")
+    StatusCorner.CornerRadius = UDim.new(0, 8)
+    StatusCorner.Parent = StatusFrame
+    
+    local StatusTitle = Instance.new("TextLabel")
+    StatusTitle.Size = UDim2.new(1, -20, 0, 30)
+    StatusTitle.Position = UDim2.new(0, 10, 0, 10)
+    StatusTitle.BackgroundTransparency = 1
+    StatusTitle.Text = "📊 系统状态"
+    StatusTitle.TextColor3 = theme.Accent
+    StatusTitle.Font = Enum.Font.GothamBold
+    StatusTitle.TextSize = 18
+    StatusTitle.TextXAlignment = Enum.TextXAlignment.Left
+    StatusTitle.Parent = StatusFrame
+    
+    -- 状态项目
+    local StatusItems = {
+        {Name = "Auto Fling", Key = "AutoTarget"},
+        {Name = "Prediction", Key = "UsePrediction"},
+        {Name = "Hat Mode", Key = "UseHatFling"},
+        {Name = "Target Lock", Key = "TargetSpecificPlayer"}
+    }
+    
+    for i, item in ipairs(StatusItems) do
+        local StatusItem = Instance.new("TextLabel")
+        StatusItem.Size = UDim2.new(0.45, 0, 0, 20)
+        StatusItem.Position = UDim2.new((i - 1) % 2 * 0.5, 10, math.floor((i - 1) / 2) * 0.25 + 0.3, 0)
+        StatusItem.BackgroundTransparency = 1
+        StatusItem.Text = item.Name .. ":"
+        StatusItem.TextColor3 = theme.Text
+        StatusItem.Font = Enum.Font.Gotham
+        StatusItem.TextSize = 12
+        StatusItem.TextXAlignment = Enum.TextXAlignment.Left
+        StatusItem.Parent = StatusFrame
+        
+        local StatusValue = Instance.new("TextLabel")
+        StatusValue.Size = UDim2.new(0.45, 0, 0, 20)
+        StatusValue.Position = UDim2.new((i - 1) % 2 * 0.5 + 0.45, 10, math.floor((i - 1) / 2) * 0.25 + 0.3, 0)
+        StatusValue.BackgroundTransparency = 1
+        StatusValue.Text = Settings[item.Key] and (item.Key == "TargetSpecificPlayer" and (Settings[item.Key] ~= "" and Settings[item.Key] or "None") or "ON") or "OFF"
+        StatusValue.TextColor3 = Settings[item.Key] and theme.Accent or Color3.fromRGB(255, 100, 100)
+        StatusValue.Font = Enum.Font.GothamBold
+        StatusValue.TextSize = 12
+        StatusValue.TextXAlignment = Enum.TextXAlignment.Right
+        StatusValue.Parent = StatusFrame
+    end
+end
+
+function UIManager:CreateSettingsPage(parent, theme)
+    -- 设置页面（限于篇幅，这里只创建框架）
+    local SettingsPage = Instance.new("Frame")
+    SettingsPage.Name = "SettingsPage"
+    SettingsPage.Size = UDim2.new(1, 0, 1, 0)
+    SettingsPage.BackgroundTransparency = 1
+    SettingsPage.Visible = false
+    SettingsPage.Parent = parent
+    
+    -- 添加设置项...
+end
+
+function UIManager:CreateVisualPage(parent, theme)
+    -- 视觉页面...
+end
+
+function UIManager:CreatePlayersPage(parent, theme)
+    -- 玩家页面...
+end
+
+function UIManager:CreateCreditsPage(parent, theme)
+    -- 关于页面...
+end
+
+function UIManager:SetupDragAndScale(dragBar, window)
+    -- 拖动功能
+    dragBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            self.Dragging = true
+            self.DragStartPos = input.Position
+            self.UIStartPos = window.Position
+        end
+    end)
+    
+    dragBar.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement and self.Dragging then
+            local delta = input.Position - self.DragStartPos
+            window.Position = UDim2.new(
+                self.UIStartPos.X.Scale,
+                self.UIStartPos.X.Offset + delta.X,
+                self.UIStartPos.Y.Scale,
+                self.UIStartPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+    
+    dragBar.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            self.Dragging = false
+        end
+    end)
+    
+    -- 缩放功能
+    local resizeHandle = Instance.new("Frame")
+    resizeHandle.Name = "ResizeHandle"
+    resizeHandle.Size = UDim2.new(0, 20, 0, 20)
+    resizeHandle.Position = UDim2.new(1, -20, 1, -20)
+    resizeHandle.BackgroundColor3 = theme.Accent
+    resizeHandle.BorderSizePixel = 0
+    resizeHandle.Parent = window
+    
+    local resizeCorner = Instance.new("UICorner")
+    resizeCorner.CornerRadius = UDim.new(0, 4)
+    resizeCorner.Parent = resizeHandle
+    
+    resizeHandle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            self.IsScaling = true
+            self.ScaleStartPos = input.Position
+            self.OriginalSize = window.Size
+        end
+    end)
+    
+    resizeHandle.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement and self.IsScaling then
+            local delta = input.Position - self.ScaleStartPos
+            local newWidth = math.clamp(self.OriginalSize.Width.Offset + delta.X, 300, 800)
+            local newHeight = math.clamp(self.OriginalSize.Height.Offset + delta.Y, 400, 600)
+            
+            window.Size = UDim2.new(0, newWidth, 0, newHeight)
+        end
+    end)
+    
+    resizeHandle.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            self.IsScaling = false
+        end
+    end)
+end
+
+function UIManager:SwitchTab(tabName)
+    for _, page in pairs(self.Elements.PagesContainer:GetChildren()) do
+        page.Visible = page.Name == tabName .. "Page"
+    end
+end
+
+function UIManager:ShowNotification(message)
+    self.Elements.NotificationLabel.Text = message
+    Animations.Notification(self.Elements.NotificationFrame)
+end
+
+function UIManager:ShowUI()
+    if not self.MainScreenGui then
+        self:CreateModernUI()
+        return
+    end
+    
+    self.MainScreenGui.Enabled = true
+    self.Elements.MainWindow.Position = UDim2.new(0.5, -225, 0.5, -275)
+    self.Elements.MainWindow.Visible = true
+end
+
+function UIManager:HideUI()
+    if self.MainScreenGui then
+        self.MainScreenGui.Enabled = false
+    end
+end
+
+function UIManager:ToggleUI()
+    if self.MainScreenGui and self.MainScreenGui.Enabled then
+        self:HideUI()
+        self:ShowNotification("UI已隐藏 (按Insert键显示)")
+    else
+        self:ShowUI()
+    end
+end
+
+function UIManager:ToggleMinimize()
+    if self.Elements.MainWindow then
+        local isMinimized = self.Elements.MainWindow.Size.Y.Scale == 0
+        local targetSize = isMinimized and UDim2.new(0, 450, 0, 550) or UDim2.new(0, 450, 0, 50)
+        Animations.CreateTween(self.Elements.MainWindow, {Size = targetSize}, 0.3):Play()
+    end
+end
+
+-- ========== 主程序 ==========
 local function Main()
-    -- 初始化甩飞系统
+    -- 初始化系统
     PhysicsFling:Initialize()
+    UIManager:CreateModernUI()
     
-    -- 创建控制界面
-    local UI, StartBtn, StopBtn, SingleBtn = CreateControlUI()
+    print("=== Sigma Fling V2.0 已加载 ===")
+    print("作者: Kennylolez")
+    print("UI设计: SigmaSpy风格")
+    print("警告: 仅供教育目的！")
     
-    -- 按钮事件
-    StartBtn.MouseButton1Click:Connect(function()
-        PhysicsFling:StartAutoFling()
-    end)
-    
-    StopBtn.MouseButton1Click:Connect(function()
-        PhysicsFling:Stop()
-    end)
-    
-    SingleBtn.MouseButton1Click:Connect(function()
-        local target = Utils.GetNearestPlayer()
-        if target then
-            PhysicsFling:ExecuteFling(target)
+    -- 键盘快捷键
+    UserInputService.InputBegan:Connect(function(input, processed)
+        if not processed then
+            if input.KeyCode == Enum.KeyCode.Insert then
+                UIManager:ToggleUI()
+            elseif input.KeyCode == Enum.KeyCode.End then
+                PhysicsFling:Stop()
+                if UIManager.MainScreenGui then
+                    UIManager.MainScreenGui:Destroy()
+                end
+                print("脚本已卸载")
+            elseif input.KeyCode == Enum.KeyCode.Home then
+                local target = Utils.GetNearestPlayer()
+                if target then
+                    PhysicsFling:ExecuteFling(target)
+                end
+            end
         end
     end)
     
     -- 角色死亡时清理
     Character.Humanoid.Died:Connect(function()
         PhysicsFling:Stop()
+        UIManager:ShowNotification("角色死亡，系统已停止")
     end)
     
-    print("=== PhysicsRepRootPart Fling System Loaded ===")
-    print("警告：此脚本仅供教育目的")
-    print("使用可能导致账户封禁！")
-    
-    -- 脚本卸载时清理
-    game:GetService("UserInputService").InputBegan:Connect(function(input, processed)
-        if input.KeyCode == Enum.KeyCode.P and not processed then
-            PhysicsFling:Stop()
-            UI:Destroy()
-            print("脚本已卸载")
-        end
-    end)
+    -- 自动隐藏UI（如果设置开启）
+    if Settings.AutoClose then
+        task.delay(10, function()
+            UIManager:ShowNotification("UI将在5秒后自动隐藏...")
+            task.delay(5, function()
+                UIManager:HideUI()
+            end)
+        end)
+    end
 end
 
--- 等待角色加载后执行
+-- 启动程序
 if Character then
     Main()
 else
@@ -410,6 +967,8 @@ else
     Main()
 end
 
--- 键盘快捷键说明
-print("按 P 键卸载脚本")
-print("UI已显示在屏幕左上角")
+-- 快捷键说明
+print("快捷键:")
+print("Insert - 显示/隐藏UI")
+print("Home - 甩飞最近玩家")
+print("End - 卸载脚本")
