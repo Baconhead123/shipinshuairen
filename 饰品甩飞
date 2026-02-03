@@ -1,5 +1,5 @@
--- Roblox 客户端脚本执行器
--- 蓝色霓虹风格 UI (全屏版)
+-- 培根执行器 (Bacon Executor)
+-- 全屏蓝色霓虹风格UI
 
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
@@ -7,11 +7,10 @@ local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 
 local player = Players.LocalPlayer
-local mouse = player:GetMouse()
 
 -- 创建主界面
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "NeonExecutor"
+ScreenGui.Name = "BaconExecutor"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
@@ -29,12 +28,12 @@ local colors = {
     primary = Color3.fromRGB(0, 170, 255),
     secondary = Color3.fromRGB(0, 100, 200),
     accent = Color3.fromRGB(0, 255, 255),
-    dark = Color3.fromRGB(10, 20, 40),
-    darker = Color3.fromRGB(5, 10, 25),
+    dark = Color3.fromRGB(8, 16, 32),
+    darker = Color3.fromRGB(4, 8, 16),
     text = Color3.fromRGB(220, 240, 255),
-    error = Color3.fromRGB(255, 50, 100),
-    success = Color3.fromRGB(0, 255, 150),
-    background = Color3.fromRGB(5, 10, 20)
+    error = Color3.fromRGB(255, 80, 120),
+    success = Color3.fromRGB(100, 255, 180),
+    background = Color3.fromRGB(2, 4, 8)
 }
 
 -- 创建全屏背景
@@ -42,104 +41,110 @@ local background = Instance.new("Frame")
 background.Name = "Background"
 background.Size = UDim2.new(1, 0, 1, 0)
 background.BackgroundColor3 = colors.background
-background.BackgroundTransparency = 0.3
+background.BackgroundTransparency = 0.9  -- 更透明的背景
 background.BorderSizePixel = 0
 background.Parent = ScreenGui
 
--- 创建主窗口（占整个屏幕）
+-- 创建主窗口（真正全屏）
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(1, -40, 1, -40) -- 留出边距
-mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
-mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+mainFrame.Size = UDim2.new(1, 0, 1, 0)  -- 完全覆盖屏幕
+mainFrame.Position = UDim2.new(0, 0, 0, 0)
 mainFrame.BackgroundColor3 = colors.dark
-mainFrame.BackgroundTransparency = 0.1
+mainFrame.BackgroundTransparency = 0.95  -- 更透明的背景
 mainFrame.BorderSizePixel = 0
 mainFrame.Parent = background
 
 -- 圆角
 local corner = Instance.new("UICorner")
 corner.Name = "Corner"
-corner.CornerRadius = UDim.new(0, 15)
+corner.CornerRadius = UDim.new(0, 0)  -- 无圆角，全屏
 corner.Parent = mainFrame
 
 -- 霓虹边框效果
 local borderGlow = Instance.new("UIStroke")
 borderGlow.Name = "BorderGlow"
 borderGlow.Color = colors.primary
-borderGlow.Thickness = 3
-borderGlow.Transparency = 0.2
+borderGlow.Thickness = 4
+borderGlow.Transparency = 0.1
 borderGlow.Parent = mainFrame
+
+-- 内容容器（居中显示）
+local contentFrame = Instance.new("Frame")
+contentFrame.Name = "ContentFrame"
+contentFrame.Size = UDim2.new(0.95, 0, 0.95, 0)
+contentFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+contentFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+contentFrame.BackgroundColor3 = colors.dark
+contentFrame.BackgroundTransparency = 0.1
+contentFrame.BorderSizePixel = 0
+contentFrame.Parent = mainFrame
+
+local contentCorner = Instance.new("UICorner")
+contentCorner.CornerRadius = UDim.new(0, 20)
+contentCorner.Parent = contentFrame
+
+local contentGlow = Instance.new("UIStroke")
+contentGlow.Color = colors.primary
+contentGlow.Thickness = 3
+contentGlow.Transparency = 0.2
+contentGlow.Parent = contentFrame
 
 -- 标题栏
 local titleBar = Instance.new("Frame")
 titleBar.Name = "TitleBar"
-titleBar.Size = UDim2.new(1, 0, 0, 40)
+titleBar.Size = UDim2.new(1, 0, 0, 45)
 titleBar.BackgroundColor3 = colors.darker
 titleBar.BackgroundTransparency = 0.2
 titleBar.BorderSizePixel = 0
-titleBar.Parent = mainFrame
+titleBar.Parent = contentFrame
 
 local titleCorner = Instance.new("UICorner")
-titleCorner.CornerRadius = UDim.new(0, 10)
+titleCorner.CornerRadius = UDim.new(0, 20)
 titleCorner.Parent = titleBar
 
 local titleGlow = Instance.new("UIStroke")
-titleGlow.Color = colors.primary
+titleGlow.Color = colors.accent
 titleGlow.Thickness = 1
-titleGlow.Transparency = 0.4
+titleGlow.Transparency = 0.3
 titleGlow.Parent = titleBar
 
 local titleText = Instance.new("TextLabel")
 titleText.Name = "TitleText"
-titleText.Size = UDim2.new(0, 250, 1, 0)
-titleText.Position = UDim2.new(0, 20, 0, 0)
+titleText.Size = UDim2.new(0, 300, 1, 0)
+titleText.Position = UDim2.new(0, 25, 0, 0)
 titleText.BackgroundTransparency = 1
-titleText.Text = "NEON EXECUTOR v3.0"
+titleText.Text = "培根执行器 v4.0"
 titleText.TextColor3 = colors.text
 titleText.Font = Enum.Font.GothamBold
-titleText.TextSize = 20
+titleText.TextSize = 24
 titleText.TextXAlignment = Enum.TextXAlignment.Left
 titleText.Parent = titleBar
 
--- 标题栏装饰
-local titleDecor = Instance.new("Frame")
-titleDecor.Name = "TitleDecor"
-titleDecor.Size = UDim2.new(0, 100, 0, 3)
-titleDecor.Position = UDim2.new(0, 20, 1, -5)
-titleDecor.BackgroundColor3 = colors.accent
-titleDecor.BorderSizePixel = 0
-titleDecor.Parent = titleBar
+-- 缩放按钮（改为X）
+local scaleButton = Instance.new("TextButton")
+scaleButton.Name = "ScaleButton"
+scaleButton.Size = UDim2.new(0, 45, 0, 45)
+scaleButton.Position = UDim2.new(1, -50, 0, 0)
+scaleButton.BackgroundColor3 = colors.dark
+scaleButton.BackgroundTransparency = 0.3
+scaleButton.Text = "✕"  -- X符号
+scaleButton.TextColor3 = colors.text
+scaleButton.Font = Enum.Font.GothamBold
+scaleButton.TextSize = 20
+scaleButton.Parent = titleBar
 
-local decorCorner = Instance.new("UICorner")
-decorCorner.CornerRadius = UDim.new(0, 2)
-decorCorner.Parent = titleDecor
-
--- 最小化按钮
-local minimizeButton = Instance.new("TextButton")
-minimizeButton.Name = "MinimizeButton"
-minimizeButton.Size = UDim2.new(0, 40, 0, 40)
-minimizeButton.Position = UDim2.new(1, -50, 0, 0)
-minimizeButton.BackgroundColor3 = colors.dark
-minimizeButton.BackgroundTransparency = 0.5
-minimizeButton.Text = "●"
-minimizeButton.TextColor3 = colors.text
-minimizeButton.Font = Enum.Font.GothamBold
-minimizeButton.TextSize = 16
-minimizeButton.Parent = titleBar
-
--- 按钮圆角
-local buttonCorner = Instance.new("UICorner")
-buttonCorner.CornerRadius = UDim.new(0, 8)
-buttonCorner.Parent = minimizeButton
+local scaleCorner = Instance.new("UICorner")
+scaleCorner.CornerRadius = UDim.new(0, 10)
+scaleCorner.Parent = scaleButton
 
 -- 创建选项卡容器
 local tabContainer = Instance.new("Frame")
 tabContainer.Name = "TabContainer"
-tabContainer.Size = UDim2.new(1, -40, 0, 40)
-tabContainer.Position = UDim2.new(0, 20, 0, 50)
+tabContainer.Size = UDim2.new(1, -50, 0, 50)
+tabContainer.Position = UDim2.new(0, 25, 0, 55)
 tabContainer.BackgroundTransparency = 1
-tabContainer.Parent = mainFrame
+tabContainer.Parent = contentFrame
 
 -- 选项卡按钮
 local tabs = {
@@ -154,25 +159,32 @@ local currentTab = "executor"
 for i, tab in ipairs(tabs) do
     local tabButton = Instance.new("TextButton")
     tabButton.Name = tab.name .. "Tab"
-    tabButton.Size = UDim2.new(0, 120, 1, 0)
-    tabButton.Position = UDim2.new(0, (i-1) * 130, 0, 0)
+    tabButton.Size = UDim2.new(0, 140, 1, 0)
+    tabButton.Position = UDim2.new(0, (i-1) * 150, 0, 0)
     tabButton.BackgroundColor3 = colors.darker
-    tabButton.BackgroundTransparency = 0.5
+    tabButton.BackgroundTransparency = (tab.id == currentTab) and 0.3 or 0.5
     tabButton.Text = tab.name
     tabButton.TextColor3 = colors.text
     tabButton.Font = Enum.Font.GothamBold
-    tabButton.TextSize = 14
+    tabButton.TextSize = 16
     tabButton.Parent = tabContainer
     
     local tabCorner = Instance.new("UICorner")
-    tabCorner.CornerRadius = UDim.new(0, 8)
+    tabCorner.CornerRadius = UDim.new(0, 10)
     tabCorner.Parent = tabButton
+    
+    local tabGlow = Instance.new("UIStroke")
+    tabGlow.Color = colors.primary
+    tabGlow.Thickness = 2
+    tabGlow.Transparency = (tab.id == currentTab) and 0.2 or 0.5
+    tabGlow.Parent = tabButton
     
     local tabIndicator = Instance.new("Frame")
     tabIndicator.Name = "Indicator"
-    tabIndicator.Size = UDim2.new(1, 0, 0, 3)
-    tabIndicator.Position = UDim2.new(0, 0, 1, -3)
-    tabIndicator.BackgroundColor3 = colors.primary
+    tabIndicator.Size = UDim2.new(0.7, 0, 0, 4)
+    tabIndicator.Position = UDim2.new(0.15, 0, 1, -4)
+    tabIndicator.AnchorPoint = Vector2.new(0, 1)
+    tabIndicator.BackgroundColor3 = colors.accent
     tabIndicator.BorderSizePixel = 0
     tabIndicator.Visible = (tab.id == currentTab)
     tabIndicator.Parent = tabButton
@@ -181,16 +193,16 @@ for i, tab in ipairs(tabs) do
     indicatorCorner.CornerRadius = UDim.new(0, 2)
     indicatorCorner.Parent = tabIndicator
     
-    tabButtons[tab.id] = {button = tabButton, indicator = tabIndicator}
+    tabButtons[tab.id] = {button = tabButton, indicator = tabIndicator, glow = tabGlow}
 end
 
 -- 创建内容容器
 local contentContainer = Instance.new("Frame")
 contentContainer.Name = "ContentContainer"
-contentContainer.Size = UDim2.new(1, -40, 1, -120)
-contentContainer.Position = UDim2.new(0, 20, 0, 100)
+contentContainer.Size = UDim2.new(1, -50, 1, -130)
+contentContainer.Position = UDim2.new(0, 25, 0, 115)
 contentContainer.BackgroundTransparency = 1
-contentContainer.Parent = mainFrame
+contentContainer.Parent = contentFrame
 
 -- 执行器选项卡内容
 local executorContent = Instance.new("Frame")
@@ -203,45 +215,45 @@ executorContent.Parent = contentContainer
 -- 脚本输入区域
 local inputFrame = Instance.new("Frame")
 inputFrame.Name = "InputFrame"
-inputFrame.Size = UDim2.new(0.49, -10, 0.7, 0)
+inputFrame.Size = UDim2.new(0.48, -10, 0.7, 0)
 inputFrame.BackgroundColor3 = colors.darker
-inputFrame.BackgroundTransparency = 0.3
+inputFrame.BackgroundTransparency = 0.2
 inputFrame.BorderSizePixel = 0
 inputFrame.Parent = executorContent
 
 local inputCorner = Instance.new("UICorner")
-inputCorner.CornerRadius = UDim.new(0, 10)
+inputCorner.CornerRadius = UDim.new(0, 15)
 inputCorner.Parent = inputFrame
 
 local inputGlow = Instance.new("UIStroke")
 inputGlow.Color = colors.secondary
 inputGlow.Thickness = 2
-inputGlow.Transparency = 0.3
+inputGlow.Transparency = 0.2
 inputGlow.Parent = inputFrame
 
 local inputTitle = Instance.new("TextLabel")
 inputTitle.Name = "InputTitle"
-inputTitle.Size = UDim2.new(1, 0, 0, 30)
+inputTitle.Size = UDim2.new(1, 0, 0, 40)
 inputTitle.BackgroundColor3 = colors.darker
-inputTitle.BackgroundTransparency = 0.5
-inputTitle.Text = " 脚本输入"
+inputTitle.BackgroundTransparency = 0.4
+inputTitle.Text = "  脚本输入"
 inputTitle.TextColor3 = colors.text
 inputTitle.Font = Enum.Font.GothamBold
-inputTitle.TextSize = 16
+inputTitle.TextSize = 18
 inputTitle.TextXAlignment = Enum.TextXAlignment.Left
 inputTitle.Parent = inputFrame
 
 local titleCorner2 = Instance.new("UICorner")
-titleCorner2.CornerRadius = UDim.new(0, 10)
+titleCorner2.CornerRadius = UDim.new(0, 15)
 titleCorner2.Parent = inputTitle
 
 local scriptInput = Instance.new("ScrollingFrame")
 scriptInput.Name = "ScriptInput"
-scriptInput.Size = UDim2.new(1, -20, 1, -40)
-scriptInput.Position = UDim2.new(0, 10, 0, 35)
+scriptInput.Size = UDim2.new(1, -20, 1, -50)
+scriptInput.Position = UDim2.new(0, 10, 0, 45)
 scriptInput.BackgroundTransparency = 1
 scriptInput.BorderSizePixel = 0
-scriptInput.ScrollBarThickness = 6
+scriptInput.ScrollBarThickness = 8
 scriptInput.ScrollBarImageColor3 = colors.primary
 scriptInput.Parent = inputFrame
 
@@ -249,7 +261,7 @@ local inputBox = Instance.new("TextBox")
 inputBox.Name = "InputBox"
 inputBox.Size = UDim2.new(1, 0, 1, 0)
 inputBox.BackgroundTransparency = 1
-inputBox.Text = "-- 在此处粘贴脚本代码\n-- 支持 loadstring 格式\n-- 例如：loadstring(game:HttpGet('https://example.com/script.lua'))()"
+inputBox.Text = "loadstring(game:HttpGet(\"https://raw.githubusercontent.com/Baconhead123/jurenjiaoben/refs/heads/main/fe巨人\"))()"
 inputBox.TextColor3 = colors.text
 inputBox.Font = Enum.Font.Code
 inputBox.TextSize = 14
@@ -263,42 +275,42 @@ inputBox.Parent = scriptInput
 -- 输出区域
 local outputFrame = Instance.new("Frame")
 outputFrame.Name = "OutputFrame"
-outputFrame.Size = UDim2.new(0.49, -10, 0.7, 0)
-outputFrame.Position = UDim2.new(0.51, 10, 0, 0)
+outputFrame.Size = UDim2.new(0.48, -10, 0.7, 0)
+outputFrame.Position = UDim2.new(0.52, 10, 0, 0)
 outputFrame.BackgroundColor3 = colors.darker
-outputFrame.BackgroundTransparency = 0.3
+outputFrame.BackgroundTransparency = 0.2
 outputFrame.BorderSizePixel = 0
 outputFrame.Parent = executorContent
 
 local outputCorner = Instance.new("UICorner")
-outputCorner.CornerRadius = UDim.new(0, 10)
+outputCorner.CornerRadius = UDim.new(0, 15)
 outputCorner.Parent = outputFrame
 
 local outputGlow = Instance.new("UIStroke")
 outputGlow.Color = colors.accent
 outputGlow.Thickness = 2
-outputGlow.Transparency = 0.3
+outputGlow.Transparency = 0.2
 outputGlow.Parent = outputFrame
 
 local outputTitle = Instance.new("TextLabel")
 outputTitle.Name = "OutputTitle"
-outputTitle.Size = UDim2.new(1, 0, 0, 30)
+outputTitle.Size = UDim2.new(1, 0, 0, 40)
 outputTitle.BackgroundColor3 = colors.darker
-outputTitle.BackgroundTransparency = 0.5
-outputTitle.Text = " 输出日志"
+outputTitle.BackgroundTransparency = 0.4
+outputTitle.Text = "  脚本输出日志"
 outputTitle.TextColor3 = colors.text
 outputTitle.Font = Enum.Font.GothamBold
-outputTitle.TextSize = 16
+outputTitle.TextSize = 18
 outputTitle.TextXAlignment = Enum.TextXAlignment.Left
 outputTitle.Parent = outputFrame
 
 local outputContent = Instance.new("ScrollingFrame")
 outputContent.Name = "OutputContent"
-outputContent.Size = UDim2.new(1, -20, 1, -40)
-outputContent.Position = UDim2.new(0, 10, 0, 35)
+outputContent.Size = UDim2.new(1, -20, 1, -50)
+outputContent.Position = UDim2.new(0, 10, 0, 45)
 outputContent.BackgroundTransparency = 1
 outputContent.BorderSizePixel = 0
-outputContent.ScrollBarThickness = 6
+outputContent.ScrollBarThickness = 8
 outputContent.ScrollBarImageColor3 = colors.accent
 outputContent.Parent = outputFrame
 
@@ -307,7 +319,7 @@ outputText.Name = "OutputText"
 outputText.Size = UDim2.new(1, 0, 0, 0)
 outputText.AutomaticSize = Enum.AutomaticSize.Y
 outputText.BackgroundTransparency = 1
-outputText.Text = ">> 脚本执行器已就绪\n>> 欢迎使用 Neon Executor v3.0"
+outputText.Text = ">> 培根执行器 v4.0 已加载\n>> 就绪..."
 outputText.TextColor3 = colors.text
 outputText.Font = Enum.Font.Code
 outputText.TextSize = 13
@@ -322,12 +334,12 @@ buttonFrame.Name = "ButtonFrame"
 buttonFrame.Size = UDim2.new(1, 0, 0.28, -10)
 buttonFrame.Position = UDim2.new(0, 0, 0.72, 10)
 buttonFrame.BackgroundColor3 = colors.darker
-buttonFrame.BackgroundTransparency = 0.3
+buttonFrame.BackgroundTransparency = 0.2
 buttonFrame.BorderSizePixel = 0
 buttonFrame.Parent = executorContent
 
 local buttonFrameCorner = Instance.new("UICorner")
-buttonFrameCorner.CornerRadius = UDim.new(0, 10)
+buttonFrameCorner.CornerRadius = UDim.new(0, 15)
 buttonFrameCorner.Parent = buttonFrame
 
 local buttonContainer = Instance.new("Frame")
@@ -353,31 +365,39 @@ for i, config in ipairs(buttonConfigs) do
     button.Size = UDim2.new(0.23, 0, 1, 0)
     button.Position = UDim2.new(config.position, 0, 0, 0)
     button.BackgroundColor3 = config.color
-    button.BackgroundTransparency = 0.3
+    button.BackgroundTransparency = 0.2
     button.Text = config.name
     button.TextColor3 = colors.text
     button.Font = Enum.Font.GothamBold
-    button.TextSize = 16
+    button.TextSize = 18
     button.Parent = buttonContainer
     
     local btnCorner = Instance.new("UICorner")
-    btnCorner.CornerRadius = UDim.new(0, 8)
+    btnCorner.CornerRadius = UDim.new(0, 10)
     btnCorner.Parent = button
     
-    buttons[config.name] = button
+    local btnGlow = Instance.new("UIStroke")
+    btnGlow.Color = config.color
+    btnGlow.Thickness = 2
+    btnGlow.Transparency = 0.3
+    btnGlow.Parent = button
+    
+    buttons[config.name] = {button = button, glow = btnGlow}
 end
 
 -- 创建UI球（最小化状态）
 local uiBall = Instance.new("ImageButton")
 uiBall.Name = "UIBall"
-uiBall.Size = UDim2.new(0, 60, 0, 60)
-uiBall.Position = UDim2.new(0.95, 0, 0.95, 0)
-uiBall.AnchorPoint = Vector2.new(1, 1)
+uiBall.Size = UDim2.new(0, 70, 0, 70)
+uiBall.Position = UDim2.new(0.5, 0, 0.5, 0)
+uiBall.AnchorPoint = Vector2.new(0.5, 0.5)
 uiBall.BackgroundColor3 = colors.dark
-uiBall.BackgroundTransparency = 0.2
+uiBall.BackgroundTransparency = 0.1
 uiBall.Image = "rbxassetid://78752306566484"
+uiBall.ImageColor3 = Color3.fromRGB(255, 255, 255)
 uiBall.ScaleType = Enum.ScaleType.Fit
 uiBall.Visible = false
+uiBall.ZIndex = 100
 uiBall.Parent = ScreenGui
 
 local ballCorner = Instance.new("UICorner")
@@ -386,37 +406,54 @@ ballCorner.Parent = uiBall
 
 local ballGlow = Instance.new("UIStroke")
 ballGlow.Color = colors.accent
-ballGlow.Thickness = 3
-ballGlow.Transparency = 0.3
+ballGlow.Thickness = 4
+ballGlow.Transparency = 0.2
 ballGlow.Parent = uiBall
 
--- 球拖动功能
+-- 球拖动功能（修复版）
 local isDraggingBall = false
 local dragStartPos, ballStartPos
+local dragConnection
 
 uiBall.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         isDraggingBall = true
-        dragStartPos = input.Position
+        dragStartPos = Vector2.new(input.Position.X, input.Position.Y)
         ballStartPos = uiBall.Position
-    end
-end)
-
-UserInputService.InputChanged:Connect(function(input)
-    if isDraggingBall and input.UserInputType == Enum.UserInputType.MouseMovement then
-        local delta = input.Position - dragStartPos
-        uiBall.Position = UDim2.new(
-            ballStartPos.X.Scale,
-            ballStartPos.X.Offset + delta.X,
-            ballStartPos.Y.Scale,
-            ballStartPos.Y.Offset + delta.Y
-        )
+        
+        -- 移除旧的连接
+        if dragConnection then
+            dragConnection:Disconnect()
+        end
+        
+        -- 连接拖动事件
+        dragConnection = UserInputService.InputChanged:Connect(function(input2)
+            if isDraggingBall and (input2.UserInputType == Enum.UserInputType.MouseMovement or input2.UserInputType == Enum.UserInputType.Touch) then
+                local currentPos = Vector2.new(input2.Position.X, input2.Position.Y)
+                local delta = currentPos - dragStartPos
+                
+                -- 计算新的位置
+                local newX = ballStartPos.X.Offset + delta.X
+                local newY = ballStartPos.Y.Offset + delta.Y
+                
+                -- 限制在屏幕范围内
+                local screenSize = workspace.CurrentCamera.ViewportSize
+                newX = math.clamp(newX, 0, screenSize.X - uiBall.Size.X.Offset)
+                newY = math.clamp(newY, 0, screenSize.Y - uiBall.Size.Y.Offset)
+                
+                uiBall.Position = UDim2.new(0, newX, 0, newY)
+            end
+        end)
     end
 end)
 
 UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         isDraggingBall = false
+        if dragConnection then
+            dragConnection:Disconnect()
+            dragConnection = nil
+        end
     end
 end)
 
@@ -429,7 +466,7 @@ pulseEffect.Color = ColorSequence.new({
 })
 pulseEffect.Rotation = 45
 pulseEffect.Enabled = true
-pulseEffect.Parent = mainFrame
+pulseEffect.Parent = contentFrame
 
 -- 更新输出函数
 local function updateOutput(message, color)
@@ -485,6 +522,7 @@ end
 -- 注入函数
 local function injectScript()
     updateOutput("注入功能已激活", colors.accent)
+    updateOutput("正在注入脚本...", colors.primary)
     -- 这里可以添加自定义注入逻辑
 end
 
@@ -497,25 +535,30 @@ local function saveScript()
     end
 end
 
--- 最小化/恢复动画
+-- 缩放/恢复动画（优化版）
 local isMinimized = false
 
-local function toggleMinimize()
+local function toggleScale()
     if isMinimized then
         -- 恢复UI
-        background.BackgroundTransparency = 0.3
+        background.BackgroundTransparency = 0.9
         background.Visible = true
         
-        local tweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+        -- 内容框架动画
+        contentFrame.Visible = true
         
-        local tween1 = TweenService:Create(mainFrame, tweenInfo, {
-            Size = UDim2.new(1, -40, 1, -40),
+        local tweenInfo1 = TweenInfo.new(0.6, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+        local tweenInfo2 = TweenInfo.new(0.8, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out)
+        
+        local tween1 = TweenService:Create(contentFrame, tweenInfo1, {
+            Size = UDim2.new(0.95, 0, 0.95, 0),
             BackgroundTransparency = 0.1
         })
         
-        local tween2 = TweenService:Create(uiBall, tweenInfo, {
+        local tween2 = TweenService:Create(uiBall, tweenInfo2, {
             Size = UDim2.new(0, 0, 0, 0),
-            BackgroundTransparency = 1
+            BackgroundTransparency = 1,
+            ImageTransparency = 1
         })
         
         tween1:Play()
@@ -528,10 +571,14 @@ local function toggleMinimize()
         pulseEffect.Enabled = true
         isMinimized = false
     else
-        -- 最小化成球
-        local tweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
+        -- 缩放成球
+        local tweenInfo1 = TweenInfo.new(0.5, Enum.EasingStyle.Quart, Enum.EasingDirection.In)
+        local tweenInfo2 = TweenInfo.new(0.7, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
         
-        local tween1 = TweenService:Create(mainFrame, tweenInfo, {
+        -- 获取当前球的位置或使用默认位置
+        local currentPos = uiBall.Position
+        
+        local tween1 = TweenService:Create(contentFrame, tweenInfo1, {
             Size = UDim2.new(0, 0, 0, 0),
             BackgroundTransparency = 1
         })
@@ -539,16 +586,20 @@ local function toggleMinimize()
         tween1:Play()
         
         tween1.Completed:Connect(function()
+            contentFrame.Visible = false
             background.BackgroundTransparency = 1
         end)
         
+        -- 显示球并设置动画
         uiBall.Visible = true
         uiBall.Size = UDim2.new(0, 0, 0, 0)
         uiBall.BackgroundTransparency = 1
+        uiBall.ImageTransparency = 1
         
-        local tween2 = TweenService:Create(uiBall, tweenInfo, {
-            Size = UDim2.new(0, 60, 0, 60),
-            BackgroundTransparency = 0.2
+        local tween2 = TweenService:Create(uiBall, tweenInfo2, {
+            Size = UDim2.new(0, 70, 0, 70),
+            BackgroundTransparency = 0.1,
+            ImageTransparency = 0
         })
         
         tween2:Play()
@@ -559,27 +610,44 @@ local function toggleMinimize()
 end
 
 -- 按钮事件
-buttons["执行"].MouseButton1Click:Connect(executeScript)
-buttons["清除"].MouseButton1Click:Connect(clearOutput)
-buttons["注入"].MouseButton1Click:Connect(injectScript)
-buttons["保存"].MouseButton1Click:Connect(saveScript)
-minimizeButton.MouseButton1Click:Connect(toggleMinimize)
-uiBall.MouseButton1Click:Connect(toggleMinimize)
+buttons["执行"].button.MouseButton1Click:Connect(executeScript)
+buttons["清除"].button.MouseButton1Click:Connect(clearOutput)
+buttons["注入"].button.MouseButton1Click:Connect(injectScript)
+buttons["保存"].button.MouseButton1Click:Connect(saveScript)
+scaleButton.MouseButton1Click:Connect(toggleScale)
+uiBall.MouseButton1Click:Connect(toggleScale)
 
--- 按钮悬停效果
-local function setupButtonHover(button, baseColor, hoverColor)
+-- 按钮悬停效果（优化版）
+local function setupButtonHover(buttonObj, baseColor, hoverColor)
+    local button = buttonObj.button
+    local glow = buttonObj.glow
+    
     button.MouseEnter:Connect(function()
         TweenService:Create(button, TweenInfo.new(0.2), {
             BackgroundColor3 = hoverColor,
             BackgroundTransparency = 0.1
         }):Play()
+        
+        if glow then
+            TweenService:Create(glow, TweenInfo.new(0.2), {
+                Color = hoverColor,
+                Transparency = 0.1
+            }):Play()
+        end
     end)
     
     button.MouseLeave:Connect(function()
         TweenService:Create(button, TweenInfo.new(0.2), {
             BackgroundColor3 = baseColor,
-            BackgroundTransparency = 0.3
+            BackgroundTransparency = 0.2
         }):Play()
+        
+        if glow then
+            TweenService:Create(glow, TweenInfo.new(0.2), {
+                Color = baseColor,
+                Transparency = 0.3
+            }):Play()
+        end
     end)
 end
 
@@ -588,7 +656,21 @@ setupButtonHover(buttons["执行"], colors.primary, colors.accent)
 setupButtonHover(buttons["清除"], colors.secondary, colors.primary)
 setupButtonHover(buttons["注入"], colors.accent, colors.success)
 setupButtonHover(buttons["保存"], colors.success, colors.accent)
-setupButtonHover(minimizeButton, colors.dark, colors.primary)
+
+-- 缩放按钮悬停效果
+scaleButton.MouseEnter:Connect(function()
+    TweenService:Create(scaleButton, TweenInfo.new(0.2), {
+        BackgroundColor3 = colors.error,
+        BackgroundTransparency = 0.1
+    }):Play()
+end)
+
+scaleButton.MouseLeave:Connect(function()
+    TweenService:Create(scaleButton, TweenInfo.new(0.2), {
+        BackgroundColor3 = colors.dark,
+        BackgroundTransparency = 0.3
+    }):Play()
+end)
 
 -- 选项卡切换
 for tabId, tabData in pairs(tabButtons) do
@@ -598,41 +680,47 @@ for tabId, tabData in pairs(tabButtons) do
         for otherId, otherData in pairs(tabButtons) do
             otherData.indicator.Visible = (otherId == tabId)
             
+            local newTransparency = (otherId == tabId) and 0.2 or 0.5
             TweenService:Create(otherData.button, TweenInfo.new(0.2), {
-                BackgroundTransparency = (otherId == tabId) and 0.3 or 0.5
+                BackgroundTransparency = newTransparency
+            }):Play()
+            
+            TweenService:Create(otherData.glow, TweenInfo.new(0.2), {
+                Transparency = newTransparency
             }):Play()
         end
     end)
 end
 
--- 脉冲动画
+-- 脉冲动画（优化版）
 local pulseConnection
 local function startPulseAnimation()
     if pulseConnection then
         pulseConnection:Disconnect()
     end
     
-    pulseConnection = RunService.Heartbeat:Connect(function(delta)
+    pulseConnection = RunService.RenderStepped:Connect(function(delta)
         local time = tick()
-        local pulse = (math.sin(time * 2) + 1) / 2
+        local pulse = (math.sin(time * 1.5) + 1) / 2  -- 更慢的脉冲
         
-        borderGlow.Transparency = 0.2 + pulse * 0.2
-        inputGlow.Transparency = 0.3 + pulse * 0.1
-        outputGlow.Transparency = 0.3 + pulse * 0.1
+        borderGlow.Transparency = 0.1 + pulse * 0.15
+        contentGlow.Transparency = 0.2 + pulse * 0.15
+        inputGlow.Transparency = 0.2 + pulse * 0.1
+        outputGlow.Transparency = 0.2 + pulse * 0.1
         
         if isMinimized then
-            ballGlow.Transparency = 0.3 + pulse * 0.2
+            ballGlow.Transparency = 0.2 + pulse * 0.3
         end
         
-        pulseEffect.Offset = Vector2.new(pulse * 0.5, pulse * 0.5)
+        pulseEffect.Offset = Vector2.new(pulse * 0.3, pulse * 0.3)  -- 更小的偏移
     end)
 end
 
 startPulseAnimation()
 
 -- 初始化完成
-updateOutput("霓虹脚本执行器 v3.0 已加载!", colors.accent)
-updateOutput("UI占整个屏幕，可缩放为UI球", colors.primary)
+updateOutput("培根执行器 v4.0 已加载!", colors.accent)
+updateOutput("UI全屏显示，可缩放为UI球", colors.primary)
 updateOutput("UI球可拖动，点击恢复全屏", colors.text)
 
 -- 添加一些装饰性元素
@@ -640,24 +728,35 @@ local decorations = Instance.new("Frame")
 decorations.Name = "Decorations"
 decorations.Size = UDim2.new(1, 0, 1, 0)
 decorations.BackgroundTransparency = 1
-decorations.Parent = mainFrame
+decorations.Parent = contentFrame
 
 -- 创建一些装饰性光点
-for i = 1, 10 do
+for i = 1, 15 do
     local dot = Instance.new("Frame")
-    dot.Size = UDim2.new(0, math.random(2, 5), 0, math.random(2, 5))
+    dot.Size = UDim2.new(0, math.random(3, 6), 0, math.random(3, 6))
     dot.Position = UDim2.new(math.random() * 0.9, 0, math.random() * 0.9, 0)
     dot.BackgroundColor3 = colors.accent
-    dot.BackgroundTransparency = 0.8
+    dot.BackgroundTransparency = 0.7
     dot.BorderSizePixel = 0
     dot.Parent = decorations
     
+    local dotCorner = Instance.new("UICorner")
+    dotCorner.CornerRadius = UDim.new(1, 0)
+    dotCorner.Parent = dot
+    
     spawn(function()
         while dot and dot.Parent do
-            local tween = TweenService:Create(dot, TweenInfo.new(2), {
-                BackgroundTransparency = math.random(7, 9) / 10
+            local tween1 = TweenService:Create(dot, TweenInfo.new(1.5), {
+                BackgroundTransparency = math.random(8, 9) / 10
             })
-            tween:Play()
+            
+            local tween2 = TweenService:Create(dot, TweenInfo.new(1.5), {
+                BackgroundTransparency = 0.7
+            })
+            
+            tween1:Play()
+            wait(1.5)
+            tween2:Play()
             wait(math.random(1, 3))
         end
     end)
@@ -673,7 +772,29 @@ end)
 
 inputBox.FocusLost:Connect(function()
     if inputBox.Text == "" then
-        inputBox.Text = "-- 在此处粘贴脚本代码\n-- 支持 loadstring 格式\n-- 例如：loadstring(game:HttpGet('https://example.com/script.lua'))()"
-        inputBox.TextColor3 = Color3.fromRGB(150, 180, 220)
+        inputBox.Text = "loadstring(game:HttpGet(\"https://raw.githubusercontent.com/Baconhead123/jurenjiaoben/refs/heads/main/fe巨人\"))()"
+        inputBox.TextColor3 = Color3.fromRGB(180, 200, 230)
+    end
+end)
+
+-- 自动调整输入框大小
+inputBox:GetPropertyChangedSignal("Text"):Connect(function()
+    scriptInput.CanvasSize = UDim2.new(0, 0, 0, inputBox.TextBounds.Y + 20)
+end)
+
+-- 初始调整
+scriptInput.CanvasSize = UDim2.new(0, 0, 0, inputBox.TextBounds.Y + 20)
+outputContent.CanvasSize = UDim2.new(0, 0, 0, outputText.TextBounds.Y + 10)
+
+-- 键盘快捷键
+UserInputService.InputBegan:Connect(function(input, processed)
+    if not processed then
+        if input.KeyCode == Enum.KeyCode.F5 then
+            executeScript()
+        elseif input.KeyCode == Enum.KeyCode.F6 then
+            toggleScale()
+        elseif input.KeyCode == Enum.KeyCode.F7 then
+            clearOutput()
+        end
     end
 end)
