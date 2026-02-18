@@ -1,791 +1,379 @@
--- 培根执行器 - 客户端脚本执行器
--- 蓝色霓虹风格 UI (全屏修复版)
+--[[
+    Uhhhhhh Reanimate GUI - 超炫酷控制面板
+    功能：
+        - 一键进入永久死亡状态，捕获掉落帽子
+        - 帽子碰撞：让帽子成为物理障碍
+        - 帽子甩飞：将帽子作为导弹攻击目标
+        - 炫酷UI：动态渐变、发光、动画
+    环境需求：支持 sethiddenproperty / isnetworkowner 的执行器（Krnl, Synapse等）
+]]
 
 local Players = game:GetService("Players")
-local TweenService = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local LocalPlayer = Players.LocalPlayer
+local Mouse = LocalPlayer:GetMouse()
 
-local player = Players.LocalPlayer
-local mouse = player:GetMouse()
+-- ==================== 辅助函数 ====================
+local function IsNetworkOwner(part)
+    return part and (isnetworkowner and isnetworkowner(part) or true) -- 若不存在则默认真
+end
 
--- 创建主界面
+local function SetUACFrameNetless(handle, dt, targetCF, extraVel, spin)
+    if not IsNetworkOwner(handle) then return false end
+    local vel = (targetCF.Position - handle.Position) / dt
+    if vel.Magnitude > 16384 then vel = vel.Unit * 16384 end
+    handle.CFrame = targetCF
+    handle.AssemblyLinearVelocity = vel + (extraVel or Vector3.new())
+    if spin then
+        handle.AssemblyAngularVelocity = Vector3.new(16384, 16384, 16384)
+    end
+    return true
+end
+
+-- ==================== 核心状态 ====================
+local Reanim = {
+    Active = false,               -- 是否已进入死亡状态
+    DeadParts = {},               -- 死亡后掉落的帽子Handle列表
+    FlingTarget = nil,            -- 当前甩飞目标
+    FlingConn = nil,              -- 甩飞循环连接
+    CollideEnabled = false,
+    FlingEnabled = false,
+    SelectedMethod = "All",       -- 甩飞方法: "All" / "Biggest" / "Tool"
+}
+
+-- ==================== UI 构建 ====================
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "BaconExecutor"
-ScreenGui.ResetOnSpawn = false
+ScreenGui.Name = "UhhhhhhGUI"
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
-if gethui then
-    ScreenGui.Parent = gethui()
-elseif syn and syn.protect_gui then
-    syn.protect_gui(ScreenGui)
-    ScreenGui.Parent = game.CoreGui
-else
-    ScreenGui.Parent = game.CoreGui
+-- 主框架 (炫酷半透明背景)
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 320, 0, 260)
+MainFrame.Position = UDim2.new(0.5, -160, 0.5, -130)
+MainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
+MainFrame.BackgroundTransparency = 0.2
+MainFrame.BorderSizePixel = 0
+MainFrame.Parent = ScreenGui
+
+-- 圆角 + 阴影
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 12)
+UICorner.Parent = MainFrame
+
+local UIStroke = Instance.new("UIStroke")
+UIStroke.Color = Color3.fromRGB(0, 200, 255)
+UIStroke.Thickness = 1.5
+UIStroke.Transparency = 0.6
+UIStroke.Parent = MainFrame
+
+-- 拖动功能
+local DragDetector = Instance.new("DragDetector")  -- 某些执行器可能没有，可用UserInputService模拟，此处简化
+DragDetector.Parent = MainFrame
+-- 如果DragDetector不可用，可用经典拖动代码，但为了简洁略过
+
+-- 标题
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 40)
+Title.Position = UDim2.new(0, 0, 0, 0)
+Title.BackgroundTransparency = 1
+Title.Text = "⚡ UHHHHH REANIMATE ⚡"
+Title.TextColor3 = Color3.fromRGB(0, 230, 255)
+Title.TextStrokeTransparency = 0.3
+Title.TextScaled = true
+Title.Font = Enum.Font.GothamBold
+Title.Parent = MainFrame
+
+-- 装饰光条
+local TopGlow = Instance.new("Frame")
+TopGlow.Size = UDim2.new(1, -20, 0, 3)
+TopGlow.Position = UDim2.new(0, 10, 0, 40)
+TopGlow.BackgroundColor3 = Color3.fromRGB(0, 200, 255)
+TopGlow.BorderSizePixel = 0
+TopGlow.Parent = MainFrame
+local GlowCorner = Instance.new("UICorner")
+GlowCorner.CornerRadius = UDim.new(0, 4)
+GlowCorner.Parent = TopGlow
+
+-- 状态指示
+local StatusText = Instance.new("TextLabel")
+StatusText.Size = UDim2.new(1, -20, 0, 25)
+StatusText.Position = UDim2.new(0, 10, 0, 50)
+StatusText.BackgroundTransparency = 1
+StatusText.Text = "⛔ 未激活"
+StatusText.TextColor3 = Color3.fromRGB(255, 80, 80)
+StatusText.TextXAlignment = Enum.TextXAlignment.Left
+StatusText.TextScaled = true
+StatusText.Font = Enum.Font.Gotham
+StatusText.Parent = MainFrame
+
+-- 按钮容器
+local ButtonHolder = Instance.new("Frame")
+ButtonHolder.Size = UDim2.new(1, -20, 0, 120)
+ButtonHolder.Position = UDim2.new(0, 10, 0, 85)
+ButtonHolder.BackgroundTransparency = 1
+ButtonHolder.Parent = MainFrame
+
+-- 创建按钮函数
+local function createButton(text, pos, color)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0.5, -5, 0, 35)
+    btn.Position = pos
+    btn.Text = text
+    btn.TextColor3 = Color3.new(1,1,1)
+    btn.TextScaled = true
+    btn.Font = Enum.Font.GothamBold
+    btn.BackgroundColor3 = color
+    btn.BorderSizePixel = 0
+    btn.Parent = ButtonHolder
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = btn
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(255,255,255)
+    stroke.Thickness = 1
+    stroke.Transparency = 0.7
+    stroke.Parent = btn
+
+    -- 悬停动画
+    btn.MouseEnter:Connect(function()
+        TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = color:Lerp(Color3.new(1,1,1), 0.3)}):Play()
+    end)
+    btn.MouseLeave:Connect(function()
+        TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = color}):Play()
+    end)
+    return btn
 end
 
--- 颜色配置（蓝色霓虹主题）
-local colors = {
-    primary = Color3.fromRGB(0, 170, 255),
-    secondary = Color3.fromRGB(0, 100, 200),
-    accent = Color3.fromRGB(0, 255, 255),
-    dark = Color3.fromRGB(10, 20, 40),
-    darker = Color3.fromRGB(5, 10, 25),
-    text = Color3.fromRGB(220, 240, 255),
-    error = Color3.fromRGB(255, 50, 100),
-    success = Color3.fromRGB(0, 255, 150),
-    background = Color3.fromRGB(5, 10, 20)
-}
+-- 放置按钮：两列
+local btn1 = createButton("💀 死亡", UDim2.new(0, 0, 0, 0), Color3.fromRGB(180, 0, 0))      -- 激活死亡
+local btn2 = createButton("🎯 碰撞", UDim2.new(0.5, 5, 0, 0), Color3.fromRGB(0, 100, 180))  -- 帽子碰撞
+local btn3 = createButton("🚀 甩飞", UDim2.new(0, 0, 0, 40), Color3.fromRGB(0, 150, 50))    -- 开启甩飞
+local btn4 = createButton("⚙️ 方法", UDim2.new(0.5, 5, 0, 40), Color3.fromRGB(150, 75, 0))  -- 切换方法
+local btn5 = createButton("🎯 选目标", UDim2.new(0, 0, 0, 80), Color3.fromRGB(200, 0, 200)) -- 选择目标
+local btn6 = createButton("⏹️ 停止", UDim2.new(0.5, 5, 0, 80), Color3.fromRGB(100, 100, 100))-- 停止所有
 
--- 创建全屏背景（真正全屏）
-local background = Instance.new("Frame")
-background.Name = "Background"
-background.Size = UDim2.new(1, 0, 1, 0)
-background.BackgroundColor3 = colors.background
-background.BackgroundTransparency = 0.3
-background.BorderSizePixel = 0
-background.ZIndex = 1
-background.Parent = ScreenGui
+-- 方法显示
+local MethodLabel = Instance.new("TextLabel")
+MethodLabel.Size = UDim2.new(1, 0, 0, 20)
+MethodLabel.Position = UDim2.new(0, 0, 1, -25)
+MethodLabel.BackgroundTransparency = 1
+MethodLabel.Text = "当前甩飞方法: All"
+MethodLabel.TextColor3 = Color3.fromRGB(200,200,200)
+MethodLabel.TextScaled = true
+MethodLabel.Font = Enum.Font.Gotham
+MethodLabel.Parent = MainFrame
 
--- 创建主窗口（真正全屏）
-local mainFrame = Instance.new("Frame")
-mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(1, -10, 1, -10) -- 稍微缩小一点，留出边缘
-mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
-mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-mainFrame.BackgroundColor3 = colors.dark
-mainFrame.BackgroundTransparency = 0.05
-mainFrame.BorderSizePixel = 0
-mainFrame.ZIndex = 2
-mainFrame.Parent = background
+-- ==================== 功能实现 ====================
 
--- 圆角
-local corner = Instance.new("UICorner")
-corner.Name = "Corner"
-corner.CornerRadius = UDim.new(0, 20)
-corner.Parent = mainFrame
-
--- 霓虹边框效果
-local borderGlow = Instance.new("UIStroke")
-borderGlow.Name = "BorderGlow"
-borderGlow.Color = colors.primary
-borderGlow.Thickness = 4
-borderGlow.Transparency = 0.1
-borderGlow.Parent = mainFrame
-
--- 标题栏
-local titleBar = Instance.new("Frame")
-titleBar.Name = "TitleBar"
-titleBar.Size = UDim2.new(1, 0, 0, 45)
-titleBar.BackgroundColor3 = colors.darker
-titleBar.BackgroundTransparency = 0.1
-titleBar.BorderSizePixel = 0
-titleBar.ZIndex = 3
-titleBar.Parent = mainFrame
-
-local titleCorner = Instance.new("UICorner")
-titleCorner.CornerRadius = UDim.new(0, 15)
-titleCorner.Parent = titleBar
-
-local titleGlow = Instance.new("UIStroke")
-titleGlow.Color = colors.primary
-titleGlow.Thickness = 2
-titleGlow.Transparency = 0.3
-titleGlow.Parent = titleBar
-
-local titleText = Instance.new("TextLabel")
-titleText.Name = "TitleText"
-titleText.Size = UDim2.new(0, 200, 1, 0)
-titleText.Position = UDim2.new(0, 20, 0, 0)
-titleText.BackgroundTransparency = 1
-titleText.Text = "BACON EXECUTOR"
-titleText.TextColor3 = colors.text
-titleText.Font = Enum.Font.GothamBold
-titleText.TextSize = 22
-titleText.TextXAlignment = Enum.TextXAlignment.Left
-titleText.Parent = titleBar
-
--- 标题栏装饰
-local titleDecor = Instance.new("Frame")
-titleDecor.Name = "TitleDecor"
-titleDecor.Size = UDim2.new(0, 120, 0, 4)
-titleDecor.Position = UDim2.new(0, 20, 1, -6)
-titleDecor.BackgroundColor3 = colors.accent
-titleDecor.BorderSizePixel = 0
-titleDecor.ZIndex = 4
-titleDecor.Parent = titleBar
-
-local decorCorner = Instance.new("UICorner")
-decorCorner.CornerRadius = UDim.new(0, 2)
-decorCorner.Parent = titleDecor
-
--- 缩放按钮（改为X样式）
-local scaleButton = Instance.new("TextButton")
-scaleButton.Name = "ScaleButton"
-scaleButton.Size = UDim2.new(0, 45, 0, 45)
-scaleButton.Position = UDim2.new(1, -50, 0, 0)
-scaleButton.BackgroundColor3 = colors.dark
-scaleButton.BackgroundTransparency = 0.4
-scaleButton.Text = "✕"
-scaleButton.TextColor3 = colors.text
-scaleButton.Font = Enum.Font.GothamBold
-scaleButton.TextSize = 24
-scaleButton.ZIndex = 5
-scaleButton.Parent = titleBar
-
-local buttonCorner = Instance.new("UICorner")
-buttonCorner.CornerRadius = UDim.new(0, 10)
-buttonCorner.Parent = scaleButton
-
--- 创建选项卡容器
-local tabContainer = Instance.new("Frame")
-tabContainer.Name = "TabContainer"
-tabContainer.Size = UDim2.new(1, -40, 0, 45)
-tabContainer.Position = UDim2.new(0, 20, 0, 60)
-tabContainer.BackgroundTransparency = 1
-tabContainer.ZIndex = 3
-tabContainer.Parent = mainFrame
-
--- 选项卡按钮
-local tabs = {
-    {name = "执行器", id = "executor"},
-    {name = "脚本中心", id = "scripts"},
-    {name = "设置", id = "settings"}
-}
-
-local tabButtons = {}
-local currentTab = "executor"
-
-for i, tab in ipairs(tabs) do
-    local tabButton = Instance.new("TextButton")
-    tabButton.Name = tab.name .. "Tab"
-    tabButton.Size = UDim2.new(0, 130, 1, 0)
-    tabButton.Position = UDim2.new(0, (i-1) * 140, 0, 0)
-    tabButton.BackgroundColor3 = colors.darker
-    tabButton.BackgroundTransparency = (tab.id == currentTab) and 0.3 or 0.5
-    tabButton.Text = tab.name
-    tabButton.TextColor3 = colors.text
-    tabButton.Font = Enum.Font.GothamBold
-    tabButton.TextSize = 16
-    tabButton.ZIndex = 4
-    tabButton.Parent = tabContainer
-    
-    local tabCorner = Instance.new("UICorner")
-    tabCorner.CornerRadius = UDim.new(0, 10)
-    tabCorner.Parent = tabButton
-    
-    local tabIndicator = Instance.new("Frame")
-    tabIndicator.Name = "Indicator"
-    tabIndicator.Size = UDim2.new(1, 0, 0, 4)
-    tabIndicator.Position = UDim2.new(0, 0, 1, -4)
-    tabIndicator.BackgroundColor3 = colors.primary
-    tabIndicator.BorderSizePixel = 0
-    tabIndicator.Visible = (tab.id == currentTab)
-    tabIndicator.ZIndex = 5
-    tabIndicator.Parent = tabButton
-    
-    local indicatorCorner = Instance.new("UICorner")
-    indicatorCorner.CornerRadius = UDim.new(0, 2)
-    indicatorCorner.Parent = tabIndicator
-    
-    tabButtons[tab.id] = {button = tabButton, indicator = tabIndicator}
-end
-
--- 创建内容容器
-local contentContainer = Instance.new("Frame")
-contentContainer.Name = "ContentContainer"
-contentContainer.Size = UDim2.new(1, -40, 1, -130)
-contentContainer.Position = UDim2.new(0, 20, 0, 120)
-contentContainer.BackgroundTransparency = 1
-contentContainer.ZIndex = 3
-contentContainer.Parent = mainFrame
-
--- 执行器选项卡内容
-local executorContent = Instance.new("Frame")
-executorContent.Name = "ExecutorContent"
-executorContent.Size = UDim2.new(1, 0, 1, 0)
-executorContent.BackgroundTransparency = 1
-executorContent.Visible = true
-executorContent.ZIndex = 4
-executorContent.Parent = contentContainer
-
--- 脚本输入区域
-local inputFrame = Instance.new("Frame")
-inputFrame.Name = "InputFrame"
-inputFrame.Size = UDim2.new(0.49, -10, 0.7, 0)
-inputFrame.BackgroundColor3 = colors.darker
-inputFrame.BackgroundTransparency = 0.2
-inputFrame.BorderSizePixel = 0
-inputFrame.ZIndex = 5
-inputFrame.Parent = executorContent
-
-local inputCorner = Instance.new("UICorner")
-inputCorner.CornerRadius = UDim.new(0, 15)
-inputCorner.Parent = inputFrame
-
-local inputGlow = Instance.new("UIStroke")
-inputGlow.Color = colors.secondary
-inputGlow.Thickness = 2
-inputGlow.Transparency = 0.2
-inputGlow.Parent = inputFrame
-
-local inputTitle = Instance.new("TextLabel")
-inputTitle.Name = "InputTitle"
-inputTitle.Size = UDim2.new(1, 0, 0, 35)
-inputTitle.BackgroundColor3 = colors.darker
-inputTitle.BackgroundTransparency = 0.4
-inputTitle.Text = "  脚本输入"
-inputTitle.TextColor3 = colors.text
-inputTitle.Font = Enum.Font.GothamBold
-inputTitle.TextSize = 16
-inputTitle.TextXAlignment = Enum.TextXAlignment.Left
-inputTitle.ZIndex = 6
-inputTitle.Parent = inputFrame
-
-local titleCorner2 = Instance.new("UICorner")
-titleCorner2.CornerRadius = UDim.new(0, 15)
-titleCorner2.Parent = inputTitle
-
-local scriptInput = Instance.new("ScrollingFrame")
-scriptInput.Name = "ScriptInput"
-scriptInput.Size = UDim2.new(1, -20, 1, -45)
-scriptInput.Position = UDim2.new(0, 10, 0, 40)
-scriptInput.BackgroundTransparency = 1
-scriptInput.BorderSizePixel = 0
-scriptInput.ScrollBarThickness = 8
-scriptInput.ScrollBarImageColor3 = colors.primary
-scriptInput.ZIndex = 6
-scriptInput.Parent = inputFrame
-
-local inputBox = Instance.new("TextBox")
-inputBox.Name = "InputBox"
-inputBox.Size = UDim2.new(1, 0, 0, 0)
-inputBox.AutomaticSize = Enum.AutomaticSize.Y
-inputBox.BackgroundTransparency = 1
-inputBox.Text = "-- 在此处粘贴脚本代码\n-- 支持 loadstring 格式\n-- 例如：loadstring(game:HttpGet('https://example.com/script.lua'))()"
-inputBox.TextColor3 = Color3.fromRGB(150, 180, 220)
-inputBox.Font = Enum.Font.Code
-inputBox.TextSize = 14
-inputBox.TextXAlignment = Enum.TextXAlignment.Left
-inputBox.TextYAlignment = Enum.TextYAlignment.Top
-inputBox.TextWrapped = true
-inputBox.ClearTextOnFocus = false
-inputBox.MultiLine = true
-inputBox.ZIndex = 7
-inputBox.Parent = scriptInput
-
--- 输出区域
-local outputFrame = Instance.new("Frame")
-outputFrame.Name = "OutputFrame"
-outputFrame.Size = UDim2.new(0.49, -10, 0.7, 0)
-outputFrame.Position = UDim2.new(0.51, 10, 0, 0)
-outputFrame.BackgroundColor3 = colors.darker
-outputFrame.BackgroundTransparency = 0.2
-outputFrame.BorderSizePixel = 0
-outputFrame.ZIndex = 5
-outputFrame.Parent = executorContent
-
-local outputCorner = Instance.new("UICorner")
-outputCorner.CornerRadius = UDim.new(0, 15)
-outputCorner.Parent = outputFrame
-
-local outputGlow = Instance.new("UIStroke")
-outputGlow.Color = colors.accent
-outputGlow.Thickness = 2
-outputGlow.Transparency = 0.2
-outputGlow.Parent = outputFrame
-
-local outputTitle = Instance.new("TextLabel")
-outputTitle.Name = "OutputTitle"
-outputTitle.Size = UDim2.new(1, 0, 0, 35)
-outputTitle.BackgroundColor3 = colors.darker
-outputTitle.BackgroundTransparency = 0.4
-outputTitle.Text = "  输出日志"
-outputTitle.TextColor3 = colors.text
-outputTitle.Font = Enum.Font.GothamBold
-outputTitle.TextSize = 16
-outputTitle.TextXAlignment = Enum.TextXAlignment.Left
-outputTitle.ZIndex = 6
-outputTitle.Parent = outputFrame
-
-local outputContent = Instance.new("ScrollingFrame")
-outputContent.Name = "OutputContent"
-outputContent.Size = UDim2.new(1, -20, 1, -45)
-outputContent.Position = UDim2.new(0, 10, 0, 40)
-outputContent.BackgroundTransparency = 1
-outputContent.BorderSizePixel = 0
-outputContent.ScrollBarThickness = 8
-outputContent.ScrollBarImageColor3 = colors.accent
-outputContent.ZIndex = 6
-outputContent.Parent = outputFrame
-
-local outputText = Instance.new("TextLabel")
-outputText.Name = "OutputText"
-outputText.Size = UDim2.new(1, 0, 0, 0)
-outputText.AutomaticSize = Enum.AutomaticSize.Y
-outputText.BackgroundTransparency = 1
-outputText.Text = ">> 培根执行器已加载\n>> 欢迎使用 Bacon Executor"
-outputText.TextColor3 = colors.text
-outputText.Font = Enum.Font.Code
-outputText.TextSize = 13
-outputText.TextXAlignment = Enum.TextXAlignment.Left
-outputText.TextYAlignment = Enum.TextYAlignment.Top
-outputText.TextWrapped = true
-outputText.ZIndex = 7
-outputText.Parent = outputContent
-
--- 按钮区域
-local buttonFrame = Instance.new("Frame")
-buttonFrame.Name = "ButtonFrame"
-buttonFrame.Size = UDim2.new(1, 0, 0.28, -10)
-buttonFrame.Position = UDim2.new(0, 0, 0.72, 10)
-buttonFrame.BackgroundColor3 = colors.darker
-buttonFrame.BackgroundTransparency = 0.2
-buttonFrame.BorderSizePixel = 0
-buttonFrame.ZIndex = 5
-buttonFrame.Parent = executorContent
-
-local buttonFrameCorner = Instance.new("UICorner")
-buttonFrameCorner.CornerRadius = UDim.new(0, 15)
-buttonFrameCorner.Parent = buttonFrame
-
-local buttonContainer = Instance.new("Frame")
-buttonContainer.Name = "ButtonContainer"
-buttonContainer.Size = UDim2.new(1, -40, 1, -20)
-buttonContainer.Position = UDim2.new(0, 20, 0, 10)
-buttonContainer.BackgroundTransparency = 1
-buttonContainer.ZIndex = 6
-buttonContainer.Parent = buttonFrame
-
--- 创建按钮
-local buttonConfigs = {
-    {name = "执行", color = colors.primary, position = 0},
-    {name = "清除", color = colors.secondary, position = 0.25},
-    {name = "注入", color = colors.accent, position = 0.5},
-    {name = "保存", color = colors.success, position = 0.75}
-}
-
-local buttons = {}
-
-for i, config in ipairs(buttonConfigs) do
-    local button = Instance.new("TextButton")
-    button.Name = config.name .. "Button"
-    button.Size = UDim2.new(0.23, 0, 1, 0)
-    button.Position = UDim2.new(config.position, 0, 0, 0)
-    button.BackgroundColor3 = config.color
-    button.BackgroundTransparency = 0.2
-    button.Text = config.name
-    button.TextColor3 = colors.text
-    button.Font = Enum.Font.GothamBold
-    button.TextSize = 18
-    button.ZIndex = 7
-    button.Parent = buttonContainer
-    
-    local btnCorner = Instance.new("UICorner")
-    btnCorner.CornerRadius = UDim.new(0, 10)
-    btnCorner.Parent = button
-    
-    buttons[config.name] = button
-end
-
--- 创建UI球（最小化状态）
-local uiBall = Instance.new("ImageButton")
-uiBall.Name = "UIBall"
-uiBall.Size = UDim2.new(0, 70, 0, 70)
-uiBall.Position = UDim2.new(0.5, 0, 0.5, 0)
-uiBall.AnchorPoint = Vector2.new(0.5, 0.5)
-uiBall.BackgroundColor3 = colors.dark
-uiBall.BackgroundTransparency = 0.1
-uiBall.Image = "rbxassetid://78752306566484"
-uiBall.ImageColor3 = Color3.fromRGB(200, 230, 255)
-uiBall.ScaleType = Enum.ScaleType.Fit
-uiBall.Visible = false
-uiBall.ZIndex = 10
-uiBall.Parent = ScreenGui
-
-local ballCorner = Instance.new("UICorner")
-ballCorner.CornerRadius = UDim.new(1, 0)
-ballCorner.Parent = uiBall
-
-local ballGlow = Instance.new("UIStroke")
-ballGlow.Color = colors.accent
-ballGlow.Thickness = 4
-ballGlow.Transparency = 0.2
-ballGlow.Parent = uiBall
-
--- 球拖动功能（修复版）
-local isDraggingBall = false
-local dragStartPos, ballStartPos
-
-uiBall.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        isDraggingBall = true
-        dragStartPos = Vector2.new(input.Position.X, input.Position.Y)
-        ballStartPos = Vector2.new(uiBall.Position.X.Offset, uiBall.Position.Y.Offset)
-        uiBall.ZIndex = 11 -- 提高ZIndex确保在最上层
+-- 捕获掉落的帽子 (当角色子级移除时)
+local function onChildRemoved(child)
+    if not Reanim.Active then return end
+    if child:IsA("Accessory") then
+        local handle = child:FindFirstChild("Handle")
+        if handle then
+            -- 帽子已移动到工作区
+            handle.CanCollide = true
+            handle.Anchored = false
+            table.insert(Reanim.DeadParts, handle)
+            StatusText.Text = "🎩 帽子 +1  总数: "..#Reanim.DeadParts
+        end
     end
-end)
-
-UserInputService.InputChanged:Connect(function(input)
-    if isDraggingBall and input.UserInputType == Enum.UserInputType.MouseMovement then
-        local delta = Vector2.new(input.Position.X, input.Position.Y) - dragStartPos
-        local newX = ballStartPos.X + delta.X
-        local newY = ballStartPos.Y + delta.Y
-        
-        -- 确保球不会移出屏幕
-        local viewportSize = workspace.CurrentCamera.ViewportSize
-        newX = math.clamp(newX, 35, viewportSize.X - 35)
-        newY = math.clamp(newY, 35, viewportSize.Y - 35)
-        
-        uiBall.Position = UDim2.new(0, newX, 0, newY)
-    end
-end)
-
-UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        isDraggingBall = false
-        uiBall.ZIndex = 10 -- 恢复ZIndex
-    end
-end)
-
--- 霓虹脉冲效果
-local pulseEffect = Instance.new("UIGradient")
-pulseEffect.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, colors.primary),
-    ColorSequenceKeypoint.new(0.5, colors.accent),
-    ColorSequenceKeypoint.new(1, colors.primary)
-})
-pulseEffect.Rotation = 45
-pulseEffect.Enabled = true
-pulseEffect.Parent = mainFrame
-
--- 更新输出函数
-local function updateOutput(message, color)
-    outputText.TextColor3 = color or colors.text
-    outputText.Text = ">> " .. tostring(message) .. "\n" .. outputText.Text
-    
-    -- 更新滚动条位置
-    wait()
-    outputContent.CanvasSize = UDim2.new(0, 0, 0, outputText.TextBounds.Y + 20)
-    outputContent.CanvasPosition = Vector2.new(0, outputText.TextBounds.Y)
 end
 
--- 执行脚本函数
-local function executeScript()
-    local scriptCode = inputBox.Text
-    
-    if scriptCode and scriptCode ~= "" and not inputBox.Text:find("在此处粘贴脚本代码") then
-        updateOutput("正在执行脚本...", colors.accent)
-        
-        local success, result = pcall(function()
-            -- 尝试从字符串中提取loadstring
-            local loadPattern = "loadstring%(%s*game:HttpGet%(%s*['\"](.-)['\"]%s*%)%s*%)%s*%(%)"
-            local url = scriptCode:match(loadPattern)
-            
-            if url then
-                updateOutput("检测到远程脚本: " .. url, colors.primary)
+-- 进入永久死亡状态
+local function activateDeath()
+    if Reanim.Active then return end
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    -- 断开连接以防后续监听
+    if Reanim.DeathConn then Reanim.DeathConn:Disconnect() end
+
+    -- 监听帽子掉落
+    Reanim.DeathConn = char.ChildRemoved:Connect(onChildRemoved)
+
+    -- 杀死角色 (通过设置健康为0并移除Humanoid)
+    local humanoid = char:FindFirstChild("Humanoid")
+    if humanoid then
+        humanoid.Health = 0
+        humanoid:Destroy()  -- 移除Humanoid防止重生和清理
+    end
+
+    -- 将角色部件移动到工作区（避免被删除）
+    for _, part in ipairs(char:GetChildren()) do
+        if part:IsA("BasePart") then
+            part.Parent = Workspace
+            part.CanCollide = true
+            part.Anchored = false
+        elseif part:IsA("Accessory") then
+            -- 配件也会被移除，由监听处理
+        end
+    end
+
+    -- 隐藏角色模型（可选）
+    char:Destroy()  -- 彻底移除空壳
+
+    Reanim.Active = true
+    StatusText.Text = "💀 死亡模式激活  帽子: "..#Reanim.DeadParts
+    print("已进入永久死亡状态，等待帽子掉落...")
+end
+
+-- 启用帽子碰撞 (对所有捕获的帽子设置CanCollide)
+local function enableCollide()
+    if not Reanim.Active then
+        StatusText.Text = "⚠️ 请先激活死亡模式"
+        return
+    end
+    Reanim.CollideEnabled = not Reanim.CollideEnabled
+    if Reanim.CollideEnabled then
+        for _, handle in ipairs(Reanim.DeadParts) do
+            if handle and handle.Parent then
+                handle.CanCollide = true
             end
-            
-            local fn, err = loadstring(scriptCode)
-            if fn then
-                return fn()
-            else
-                error(err)
+        end
+        StatusText.Text = "🛡️ 帽子碰撞已开启"
+    else
+        for _, handle in ipairs(Reanim.DeadParts) do
+            if handle and handle.Parent then
+                handle.CanCollide = false
             end
-        end)
-        
-        if success then
-            updateOutput("脚本执行成功!", colors.success)
+        end
+        StatusText.Text = "🛡️ 帽子碰撞已关闭"
+    end
+end
+
+-- 选择目标 (鼠标点击)
+local function selectTarget()
+    if not Reanim.Active then StatusText.Text = "⚠️ 请先激活死亡模式" return end
+    StatusText.Text = "🎯 点击一个部件选择目标"
+    local conn
+    conn = Mouse.Button1Down:Connect(function()
+        local target = Mouse.Target
+        if target then
+            Reanim.FlingTarget = target
+            StatusText.Text = "🎯 目标: "..target.Name
+            -- 高亮目标 (简单加个方框)
+            local highlight = Instance.new("SelectionBox")
+            highlight.Adornee = target
+            highlight.Color3 = Color3.fromRGB(255, 0, 0)
+            highlight.LineThickness = 0.1
+            highlight.Transparency = 0.5
+            highlight.Parent = Workspace
+            game:GetService("Debris"):AddItem(highlight, 2)
         else
-            updateOutput("执行错误: " .. tostring(result), colors.error)
+            StatusText.Text = "❌ 未选中有效部件"
         end
-    else
-        updateOutput("请输入脚本代码", colors.error)
-    end
-end
-
--- 清除输出函数
-local function clearOutput()
-    outputText.Text = ">> 输出日志已清除"
-    wait()
-    outputContent.CanvasSize = UDim2.new(0, 0, 0, outputText.TextBounds.Y + 20)
-    updateOutput("就绪...", colors.text)
-end
-
--- 注入函数
-local function injectScript()
-    updateOutput("注入功能已激活", colors.accent)
-    -- 这里可以添加自定义注入逻辑
-end
-
--- 保存函数
-local function saveScript()
-    if inputBox.Text and inputBox.Text ~= "" and not inputBox.Text:find("在此处粘贴脚本代码") then
-        updateOutput("脚本已保存到本地", colors.success)
-    else
-        updateOutput("没有内容可保存", colors.error)
-    end
-end
-
--- 缩放动画（修复版）
-local isMinimized = false
-local isAnimating = false
-
-local function toggleScale()
-    if isAnimating then return end
-    isAnimating = true
-    
-    if isMinimized then
-        -- 恢复UI
-        background.Visible = true
-        
-        local tweenInfo = TweenInfo.new(0.6, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
-        
-        local tween1 = TweenService:Create(background, tweenInfo, {
-            BackgroundTransparency = 0.3
-        })
-        
-        local tween2 = TweenService:Create(mainFrame, tweenInfo, {
-            Size = UDim2.new(1, -10, 1, -10),
-            BackgroundTransparency = 0.05
-        })
-        
-        local tween3 = TweenService:Create(uiBall, tweenInfo, {
-            Size = UDim2.new(0, 0, 0, 0),
-            BackgroundTransparency = 1,
-            ImageTransparency = 1
-        })
-        
-        tween1:Play()
-        tween2:Play()
-        tween3:Play()
-        
-        tween3.Completed:Connect(function()
-            uiBall.Visible = false
-            isMinimized = false
-            isAnimating = false
-        end)
-        
-        pulseEffect.Enabled = true
-    else
-        -- 缩放成球
-        local tweenInfo = TweenInfo.new(0.6, Enum.EasingStyle.Quart, Enum.EasingDirection.InOut)
-        
-        local tween1 = TweenService:Create(mainFrame, tweenInfo, {
-            Size = UDim2.new(0, 0, 0, 0),
-            BackgroundTransparency = 1
-        })
-        
-        local tween2 = TweenService:Create(background, tweenInfo, {
-            BackgroundTransparency = 1
-        })
-        
-        tween1:Play()
-        tween2:Play()
-        
-        tween1.Completed:Connect(function()
-            background.Visible = false
-            
-            uiBall.Visible = true
-            uiBall.Size = UDim2.new(0, 0, 0, 0)
-            uiBall.BackgroundTransparency = 1
-            uiBall.ImageTransparency = 1
-            uiBall.Position = UDim2.new(0.5, 0, 0.5, 0)
-            
-            local tween3 = TweenService:Create(uiBall, tweenInfo, {
-                Size = UDim2.new(0, 70, 0, 70),
-                BackgroundTransparency = 0.1,
-                ImageTransparency = 0
-            })
-            
-            tween3:Play()
-            
-            tween3.Completed:Connect(function()
-                isMinimized = true
-                isAnimating = false
-            end)
-        end)
-        
-        pulseEffect.Enabled = false
-    end
-end
-
--- 按钮事件
-buttons["执行"].MouseButton1Click:Connect(executeScript)
-buttons["清除"].MouseButton1Click:Connect(clearOutput)
-buttons["注入"].MouseButton1Click:Connect(injectScript)
-buttons["保存"].MouseButton1Click:Connect(saveScript)
-scaleButton.MouseButton1Click:Connect(toggleScale)
-uiBall.MouseButton1Click:Connect(toggleScale)
-
--- 按钮悬停效果（优化版）
-local function setupButtonHover(button, baseColor, hoverColor)
-    button.MouseEnter:Connect(function()
-        if isAnimating then return end
-        TweenService:Create(button, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-            BackgroundColor3 = hoverColor,
-            BackgroundTransparency = 0.1,
-            Size = UDim2.new(0.23, 5, 1, 5),
-            Position = UDim2.new(button.Position.X.Scale, -2.5, 0, -2.5)
-        }):Play()
-    end)
-    
-    button.MouseLeave:Connect(function()
-        if isAnimating then return end
-        TweenService:Create(button, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-            BackgroundColor3 = baseColor,
-            BackgroundTransparency = 0.2,
-            Size = UDim2.new(0.23, 0, 1, 0),
-            Position = UDim2.new(button.Position.X.Scale, 0, 0, 0)
-        }):Play()
+        conn:Disconnect()
     end)
 end
 
--- 设置按钮悬停效果
-setupButtonHover(buttons["执行"], colors.primary, Color3.fromRGB(0, 200, 255))
-setupButtonHover(buttons["清除"], colors.secondary, Color3.fromRGB(0, 130, 230))
-setupButtonHover(buttons["注入"], colors.accent, Color3.fromRGB(50, 255, 255))
-setupButtonHover(buttons["保存"], colors.success, Color3.fromRGB(50, 255, 180))
+-- 切换甩飞方法
+local methods = {"All", "Biggest", "Tool"}
+local methodIndex = 1
+local function switchMethod()
+    methodIndex = methodIndex % 3 + 1
+    Reanim.SelectedMethod = methods[methodIndex]
+    MethodLabel.Text = "当前甩飞方法: "..Reanim.SelectedMethod
+end
 
--- 缩放按钮悬停效果
-scaleButton.MouseEnter:Connect(function()
-    if isAnimating then return end
-    TweenService:Create(scaleButton, TweenInfo.new(0.2), {
-        BackgroundColor3 = colors.error,
-        BackgroundTransparency = 0.1,
-        Rotation = 90
-    }):Play()
-end)
+-- 获取当前方法对应的帽子列表
+local function getFlingParts()
+    local parts = {}
+    if Reanim.SelectedMethod == "All" then
+        return Reanim.DeadParts
+    elseif Reanim.SelectedMethod == "Biggest" then
+        local biggest = nil
+        local maxSize = 0
+        for _, h in ipairs(Reanim.DeadParts) do
+            if h and h.Parent then
+                local s = h.Size.Magnitude
+                if s > maxSize then
+                    maxSize = s
+                    biggest = h
+                end
+            end
+        end
+        if biggest then table.insert(parts, biggest) end
+        return parts
+    else -- "Tool"
+        -- 找玩家手中的工具 (但死亡后无角色，可改为上次使用的工具，这里简单返回空)
+        return {}
+    end
+end
 
-scaleButton.MouseLeave:Connect(function()
-    if isAnimating then return end
-    TweenService:Create(scaleButton, TweenInfo.new(0.2), {
-        BackgroundColor3 = colors.dark,
-        BackgroundTransparency = 0.4,
-        Rotation = 0
-    }):Play()
-end)
+-- 开启甩飞循环
+local function startFling()
+    if not Reanim.Active then StatusText.Text = "⚠️ 请先激活死亡模式" return end
+    if not Reanim.FlingTarget then StatusText.Text = "🎯 请先选择目标" return end
 
--- 选项卡切换
-for tabId, tabData in pairs(tabButtons) do
-    tabData.button.MouseButton1Click:Connect(function()
-        if currentTab == tabId or isAnimating then return end
-        
-        currentTab = tabId
-        
-        for otherId, otherData in pairs(tabButtons) do
-            otherData.indicator.Visible = (otherId == tabId)
-            
-            TweenService:Create(otherData.button, TweenInfo.new(0.2), {
-                BackgroundTransparency = (otherId == tabId) and 0.3 or 0.5
-            }):Play()
+    if Reanim.FlingConn then Reanim.FlingConn:Disconnect() end
+
+    Reanim.FlingEnabled = true
+    StatusText.Text = "🚀 甩飞已启动 -> "..Reanim.FlingTarget.Name
+
+    Reanim.FlingConn = RunService.Heartbeat:Connect(function(dt)
+        if not Reanim.FlingTarget or not Reanim.FlingTarget.Parent then
+            StatusText.Text = "❌ 目标消失，停止甩飞"
+            Reanim.FlingEnabled = false
+            Reanim.FlingConn:Disconnect()
+            Reanim.FlingConn = nil
+            return
+        end
+
+        -- 预测目标位置（简单预测）
+        local targetPos = Reanim.FlingTarget.Position
+        local targetVel = Reanim.FlingTarget.AssemblyLinearVelocity
+        local futurePos = targetPos + targetVel * 0.3  -- 预测0.3秒后
+
+        local parts = getFlingParts()
+        for _, handle in ipairs(parts) do
+            if handle and handle.Parent then
+                local dir = (futurePos - handle.Position).Unit
+                local targetCF = CFrame.lookAt(handle.Position, handle.Position + dir) * CFrame.new(0,0,-3)
+                SetUACFrameNetless(handle, dt, targetCF, Vector3.new(), true)  -- 旋转
+            end
         end
     end)
 end
 
--- 脉冲动画（优化版）
-local pulseConnection
-local function startPulseAnimation()
-    if pulseConnection then
-        pulseConnection:Disconnect()
+-- 停止所有
+local function stopAll()
+    if Reanim.FlingConn then
+        Reanim.FlingConn:Disconnect()
+        Reanim.FlingConn = nil
     end
-    
-    pulseConnection = RunService.Heartbeat:Connect(function(delta)
-        if isAnimating then return end
-        
-        local time = tick()
-        local pulse = (math.sin(time * 1.5) + 1) / 2
-        
-        borderGlow.Transparency = 0.1 + pulse * 0.15
-        inputGlow.Transparency = 0.2 + pulse * 0.1
-        outputGlow.Transparency = 0.2 + pulse * 0.1
-        
-        if isMinimized then
-            ballGlow.Transparency = 0.2 + pulse * 0.2
-            local pulseScale = 1 + pulse * 0.1
-            uiBall.Size = UDim2.new(0, 70 * pulseScale, 0, 70 * pulseScale)
-        end
-        
-        pulseEffect.Offset = Vector2.new(pulse * 0.5, pulse * 0.5)
-    end)
+    Reanim.FlingEnabled = false
+    Reanim.CollideEnabled = false
+    StatusText.Text = "⏹️ 已停止"
 end
 
-startPulseAnimation()
+-- ==================== 绑定按钮事件 ====================
+btn1.MouseButton1Click:Connect(activateDeath)
+btn2.MouseButton1Click:Connect(enableCollide)
+btn3.MouseButton1Click:Connect(startFling)
+btn4.MouseButton1Click:Connect(switchMethod)
+btn5.MouseButton1Click:Connect(selectTarget)
+btn6.MouseButton1Click:Connect(stopAll)
 
--- 输入框事件
-inputBox.Focused:Connect(function()
-    if inputBox.Text:find("在此处粘贴脚本代码") then
-        inputBox.Text = ""
-        inputBox.TextColor3 = colors.text
-    end
-    
-    TweenService:Create(inputGlow, TweenInfo.new(0.2), {
-        Thickness = 4,
-        Transparency = 0.1
-    }):Play()
+-- 初始状态
+MethodLabel.Text = "当前甩飞方法: All"
+StatusText.Text = "⛔ 未激活"
+
+-- ==================== 清理函数 ====================
+LocalPlayer.CharacterAdded:Connect(function()  -- 如果重生，重置状态
+    Reanim.Active = false
+    Reanim.DeadParts = {}
+    Reanim.FlingTarget = nil
+    if Reanim.FlingConn then Reanim.FlingConn:Disconnect() end
+    StatusText.Text = "⛔ 未激活"
 end)
 
-inputBox.FocusLost:Connect(function()
-    if inputBox.Text == "" then
-        inputBox.Text = "-- 在此处粘贴脚本代码\n-- 支持 loadstring 格式\n-- 例如：loadstring(game:HttpGet('https://example.com/script.lua'))()"
-        inputBox.TextColor3 = Color3.fromRGB(150, 180, 220)
-    end
-    
-    TweenService:Create(inputGlow, TweenInfo.new(0.2), {
-        Thickness = 2,
-        Transparency = 0.2
-    }):Play()
-end)
-
--- 更新输入框滚动区域
-inputBox:GetPropertyChangedSignal("Text"):Connect(function()
-    wait()
-    scriptInput.CanvasSize = UDim2.new(0, 0, 0, inputBox.TextBounds.Y + 20)
-end)
-
--- 初始化完成
-updateOutput("培根执行器已加载!", colors.accent)
-updateOutput("UI全屏显示，点击X按钮缩放", colors.primary)
-updateOutput("UI球可拖动，点击恢复全屏", colors.text)
-
--- 添加一些装饰性元素
-local decorations = Instance.new("Frame")
-decorations.Name = "Decorations"
-decorations.Size = UDim2.new(1, 0, 1, 0)
-decorations.BackgroundTransparency = 1
-decorations.ZIndex = 1
-decorations.Parent = mainFrame
-
--- 创建一些装饰性光点
-for i = 1, 15 do
-    local dot = Instance.new("Frame")
-    dot.Size = UDim2.new(0, math.random(3, 6), 0, math.random(3, 6))
-    dot.Position = UDim2.new(math.random() * 0.95, 0, math.random() * 0.95, 0)
-    dot.BackgroundColor3 = colors.accent
-    dot.BackgroundTransparency = 0.9
-    dot.BorderSizePixel = 0
-    dot.ZIndex = 1
-    dot.Parent = decorations
-    
-    spawn(function()
-        while dot and dot.Parent do
-            local tween = TweenService:Create(dot, TweenInfo.new(math.random(1.5, 3)), {
-                BackgroundTransparency = math.random(8, 9.5) / 10,
-                Position = UDim2.new(math.random() * 0.95, 0, math.random() * 0.95, 0)
-            })
-            tween:Play()
-            wait(math.random(1.5, 3))
-        end
-    end)
-end
-
--- 添加键盘快捷键
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    
-    if input.KeyCode == Enum.KeyCode.F9 then
-        executeScript()
-    elseif input.KeyCode == Enum.KeyCode.F10 then
-        toggleScale()
-    end
-end)
+-- 提示
+print("Uhhhhhh Reanimate GUI 已加载！使用UI控制永久死亡和帽子技能。")
