@@ -1,31 +1,30 @@
 --[[
-    帽子甩飞 & 碰撞独立模块（兼容版）
-    修复：增加函数存在性检查，提供错误反馈
+    帽子甩飞 & 透明分身完整版
+    功能：永久死亡 → 创建透明分身 → 帽子围绕分身 → 鼠标点击甩飞
+    兼容性：自动检测 executor 支持度，给出提示
 ]]
 
-if _G.HatFlingLoaded then 
-    game:GetService("StarterGui"):SetCore("SendNotification", {Title="提示", Text="帽子分身已加载，无需重复执行"})
+if _G.HatFlingCompleteLoaded then 
+    game:GetService("StarterGui"):SetCore("SendNotification", {Title="提示", Text="脚本已运行，无需重复执行"})
     return 
 end
-_G.HatFlingLoaded = true
+_G.HatFlingCompleteLoaded = true
 
 -- ========== 环境兼容层 ==========
-local function safeRequire(funcName, defaultValue)
-    local ok, result = pcall(function() return _G[funcName] end)
-    if ok and result then return result end
-    ok, result = pcall(function() return getfenv()[funcName] end)
-    if ok and result then return result end
-    return defaultValue
+local function safeRequire(funcName, default)
+    local ok, res = pcall(function() return _G[funcName] end)
+    if ok and res then return res end
+    ok, res = pcall(function() return getfenv()[funcName] end)
+    if ok and res then return res end
+    return default
 end
 
 local cloneref = safeRequire("cloneref") or function(o) return o end
-local getcustomasset = safeRequire("getcustomasset") or safeRequire("getsynasset") or function(p) return "" end
+local getcustomasset = safeRequire("getcustomasset") or safeRequire("getsynasset") or function() return "" end
 local gethiddengui = safeRequire("gethiddengui") or function() return cloneref(game:GetService("CoreGui")) end
 local isfile = safeRequire("isfile") or function(p) local s,e=pcall(readfile,p); return s and e~=nil end
 local writefile = safeRequire("writefile") or function() end
-local delfile = safeRequire("delfile") or function() end
-local listfiles = safeRequire("listfiles") or function() return {} end
-local replicatesignal = safeRequire("replicatesignal") -- 可能不存在
+local replicatesignal = safeRequire("replicatesignal")
 local sethiddenproperty = safeRequire("sethiddenproperty")
 local isnetworkowner = safeRequire("isnetworkowner")
 
@@ -37,7 +36,6 @@ local RunService = cloneref(game:GetService("RunService"))
 local UserInputService = cloneref(game:GetService("UserInputService"))
 local TweenService = cloneref(game:GetService("TweenService"))
 local HttpService = cloneref(game:GetService("HttpService"))
-local TextService = cloneref(game:GetService("TextService"))
 local StarterGui = cloneref(game:GetService("StarterGui"))
 local Camera = workspace.CurrentCamera
 
@@ -64,36 +62,336 @@ end
 Util.GetScreenSize = function()
     return Camera and Camera.ViewportSize or Vector2.new(512,512)
 end
-Util.IsGuiVisible = function(g)
-    while g do
-        if not g.Visible then return false end
-        g = g.Parent
-    end
-    return true
-end
 Util.LinkDestroyI2C = function(a,b)
     a.Destroying:Once(function() b:Disconnect() end)
 end
 Util.LinkDestroyI2I = function(a,b)
     a.Destroying:Once(function() b:Destroy() end)
 end
-
--- 判断网络拥有者（降级版）
-local function IsNetworkOwner(part)
+Util.DeepcopyTable = function(t)
+    local c = {}
+    for k,v in pairs(t) do
+        if type(v)=="table" then v=Util.DeepcopyTable(v) end
+        c[k]=v
+    end
+    return c
+end
+Util.IsNetworkOwner = function(part)
     if isnetworkowner then
         local s,d = pcall(isnetworkowner, part)
         if s then return d end
     end
-    -- 回退：如果Part的ReceiveAge为0，则可能是本地拥有
     local s,d = pcall(function() return part.ReceiveAge == 0 end)
     if s then return d end
     return false
 end
 
--- ========== UI创建 ==========
+-- ========== 创建透明分身 ==========
+local function CreateHumanoidCharacter()
+    local char = Util.Instance("Model")
+    char.Name = "HatFlingClone"
+
+    -- 所有部件透明
+    local function makePart(name, size, pos)
+        local part = Util.Instance("Part", char)
+        part.Name = name
+        part.Size = size
+        part.Position = pos
+        part.Anchored = false
+        part.CanCollide = false
+        part.Transparency = 1
+        part.Reflectance = 0
+        part.CastShadow = false
+        part.TopSurface = Enum.SurfaceType.Smooth
+        part.BottomSurface = Enum.SurfaceType.Smooth
+        return part
+    end
+
+    local root = makePart("HumanoidRootPart", Vector3.new(2,2,1), Vector3.new(0,0,0))
+    local torso = makePart("Torso", Vector3.new(2,2,1), Vector3.new(0,0,0))
+    local head = makePart("Head", Vector3.new(2,1,1), Vector3.new(0,1.5,0))
+    local leftArm = makePart("Left Arm", Vector3.new(1,2,1), Vector3.new(-1.5,0,0))
+    local rightArm = makePart("Right Arm", Vector3.new(1,2,1), Vector3.new(1.5,0,0))
+    local leftLeg = makePart("Left Leg", Vector3.new(1,2,1), Vector3.new(-0.5,-2,0))
+    local rightLeg = makePart("Right Leg", Vector3.new(1,2,1), Vector3.new(0.5,-2,0))
+
+    local function makeMotor(name, p0, p1, c0, c1)
+        local motor = Instance.new("Motor6D", p0)
+        motor.Name = name
+        motor.Part0 = p0
+        motor.Part1 = p1
+        motor.C0 = c0
+        motor.C1 = c1
+        return motor
+    end
+
+    makeMotor("RootJoint", root, torso,
+        CFrame.new(0,0,0,-1,0,0,0,0,1,0,1,0),
+        CFrame.new(0,0,0,-1,0,0,0,0,1,0,1,0)
+    )
+    makeMotor("Neck", torso, head,
+        CFrame.new(0,1,0,-1,0,0,0,0,1,0,1,0),
+        CFrame.new(0,-0.5,0,-1,0,0,0,0,1,0,1,0)
+    )
+    makeMotor("Left Shoulder", torso, leftArm,
+        CFrame.new(-1,0.5,0,0,0,-1,0,1,0,1,0,0),
+        CFrame.new(0.5,0.5,0,0,0,-1,0,1,0,1,0,0)
+    )
+    makeMotor("Right Shoulder", torso, rightArm,
+        CFrame.new(1,0.5,0,0,0,1,0,1,0,-1,0,0),
+        CFrame.new(-0.5,0.5,0,0,0,1,0,1,0,-1,0,0)
+    )
+    makeMotor("Left Hip", torso, leftLeg,
+        CFrame.new(-1,-1,0,0,0,-1,0,1,0,1,0,0),
+        CFrame.new(-0.5,1,0,0,0,-1,0,1,0,1,0,0)
+    )
+    makeMotor("Right Hip", torso, rightLeg,
+        CFrame.new(1,-1,0,0,0,1,0,1,0,-1,0,0),
+        CFrame.new(0.5,1,0,0,0,1,0,1,0,-1,0,0)
+    )
+
+    local hum = Util.Instance("Humanoid", char)
+    hum.Name = "Humanoid"
+    hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+    hum.BreakJointsOnDeath = false
+    hum.Health = 100
+    hum.MaxHealth = 100
+
+    char.PrimaryPart = root
+    return char
+end
+
+-- ========== 永久死亡触发器 ==========
+local function TriggerPermaDeath()
+    if replicatesignal then
+        -- 方法1：通过 replicasignal 发送死亡信号
+        pcall(replicatesignal, Player.ConnectDiedSignalBackend)
+        Util.Notify("永久死亡信号已发送 (replicatesignal)")
+        return true
+    else
+        -- 方法2：RCDless 方法（适用于 RejectCharacterDeletions = Disabled 的服务器）
+        local char = Player.Character
+        if char then
+            -- 移除除了饰品以外的所有部件
+            for _,v in ipairs(char:GetChildren()) do
+                if not v:IsA("Accessory") and not v:IsA("Humanoid") then
+                    v:Destroy()
+                end
+            end
+            -- 让 Humanoid 死亡
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                hum.Health = 0
+                hum:ChangeState(Enum.HumanoidStateType.Dead)
+            end
+            Util.Notify("永久死亡触发 (RCDless 方法)")
+            return true
+        end
+    end
+    Util.Notify("⚠️ 无法触发永久死亡，请检查 executor 权限")
+    return false
+end
+
+-- ========== 帽子管理 ==========
+local HatManager = {
+    cloneChar = nil,           -- 透明分身
+    hats = {},                 -- 当前控制的帽子
+    flingTargets = {},         -- 甩飞目标队列
+    collideEnabled = true,
+    followClone = true,        -- 是否跟随分身（分身由鼠标控制移动）
+    netlessSpeed = 26,
+    useAngular = true,
+    running = false,
+    heartbeatConn = nil,
+}
+
+-- 获取所有帽子（饰品）
+function HatManager:GetAllHats()
+    local hats = {}
+    local char = Player.Character
+    if char then
+        for _,v in ipairs(char:GetChildren()) do
+            if v:IsA("Accessory") then
+                table.insert(hats, v)
+            end
+        end
+    end
+    return hats
+end
+
+-- 设置帽子状态为掉落（从角色分离）
+function HatManager:DetachHats()
+    for _,hat in ipairs(self:GetAllHats()) do
+        if sethiddenproperty then
+            pcall(sethiddenproperty, hat, "BackendAccoutrementState", 2) -- InWorkspace
+        else
+            pcall(function() hat.BackendAccoutrementState = 2 end)
+        end
+        local handle = hat:FindFirstChild("Handle")
+        if handle then
+            handle.CanCollide = self.collideEnabled
+            -- 让帽子轻微上浮，避免卡地板
+            handle.CFrame = handle.CFrame + Vector3.new(0,2,0)
+        end
+    end
+end
+
+-- 更新帽子位置（每帧调用）
+function HatManager:Update(dt)
+    if not self.running or not self.cloneChar or not self.cloneChar.PrimaryPart then return end
+    local hats = self:GetAllHats()
+    self.hats = hats
+    if #hats == 0 then return end
+
+    -- 确定目标位置（分身位置 或 鼠标位置）
+    local targetPos
+    if self.followClone then
+        targetPos = self.cloneChar.PrimaryPart.Position
+    else
+        local mousePos = UserInputService:GetMouseLocation()
+        local ray = Camera:ScreenPointToRay(mousePos.X, mousePos.Y)
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Blacklist
+        params.FilterDescendantsInstances = {self.cloneChar, Player.Character}
+        local result = workspace:Raycast(ray.Origin, ray.Direction * 1000, params)
+        targetPos = result and result.Position or (ray.Origin + ray.Direction * 500)
+    end
+
+    -- 处理甩飞目标
+    local flingTarget = self.flingTargets[1]
+    if flingTarget then
+        if flingTarget.time and os.clock() > flingTarget.time then
+            table.remove(self.flingTargets, 1)
+            flingTarget = nil
+        elseif not flingTarget.time then
+            flingTarget.time = os.clock() + (flingTarget.duration or 2)
+        end
+    end
+
+    for i, hat in ipairs(hats) do
+        local handle = hat:FindFirstChild("Handle")
+        if handle and handle:IsA("BasePart") and Util.IsNetworkOwner(handle) then
+            local targetCF
+            if flingTarget then
+                -- 甩飞模式：飞向目标
+                local targPos = flingTarget.target:GetPivot().Position
+                targetCF = CFrame.lookAt(handle.Position, targPos)
+            else
+                -- 围绕目标点排列成环
+                local radius = 3 + i * 0.4
+                local angle = (i / #hats) * math.pi * 2 + os.clock() * 0.8
+                local offset = Vector3.new(math.cos(angle)*radius, math.sin(os.clock()*2)*0.5, math.sin(angle)*radius)
+                targetCF = CFrame.new(targetPos) * CFrame.new(offset)
+            end
+            -- 应用 netless 移动
+            self:MoveHandle(handle, dt, targetCF, flingTarget ~= nil)
+        end
+    end
+end
+
+-- 移动单个帽子（netless 方法）
+function HatManager:MoveHandle(handle, dt, targetCF, spin)
+    if dt <= 0 then return end
+    local timing = os.clock()
+    local idle = Vector3.new(math.sin(timing*14), math.sin(timing*15+1.0472), math.sin(timing*16+2.0944)) * 0.001
+    if targetCF.Y < FallenPartsDestroyHeight + 5 then
+        targetCF = targetCF + Vector3.new(0, FallenPartsDestroyHeight + 5 - targetCF.Y, 0)
+    end
+    local lastCF = handle:GetAttribute("_LastCF") or handle.CFrame
+    local vel = (targetCF.Position - lastCF.Position) / dt
+    if vel.Magnitude > 16384 then
+        vel = vel.Unit * 16384
+        targetCF = lastCF.Rotation + (lastCF.Position + vel * dt)
+    end
+    handle:SetAttribute("_LastCF", targetCF)
+    handle.CFrame = targetCF
+    handle.AssemblyLinearVelocity = Vector3.new(vel.X, math.max(vel.Y, self.netlessSpeed), vel.Z)
+    if spin then
+        handle.AssemblyAngularVelocity = Vector3.new(16384,16384,16384)
+    elseif self.useAngular then
+        handle.AssemblyAngularVelocity = idle
+    else
+        handle.AssemblyAngularVelocity = Vector3.zero
+    end
+end
+
+-- 添加甩飞目标
+function HatManager:AddFlingTarget(target, duration)
+    if typeof(target) == "Instance" and target:IsA("Model") then
+        table.insert(self.flingTargets, {target=target, duration=duration})
+        Util.Notify("🎯 甩飞目标: "..target.Name)
+        return true
+    end
+    return false
+end
+
+-- 启动流程
+function HatManager:Start()
+    if self.running then return end
+
+    -- 1. 触发永久死亡
+    Util.Notify("正在触发永久死亡...")
+    local success = TriggerPermaDeath()
+    if not success then
+        Util.Notify("永久死亡失败，无法继续")
+        return
+    end
+
+    -- 等待一小段时间让角色死亡
+    task.wait(0.5)
+
+    -- 2. 创建透明分身
+    self.cloneChar = CreateHumanoidCharacter()
+    self.cloneChar.Parent = workspace
+    -- 放置于原角色附近
+    local oldChar = Player.Character
+    if oldChar and oldChar.PrimaryPart then
+        self.cloneChar:SetPrimaryPartCFrame(oldChar.PrimaryPart.CFrame + Vector3.new(0,3,0))
+    else
+        self.cloneChar:SetPrimaryPartCFrame(CFrame.new(0,10,0))
+    end
+    Util.Notify("透明分身已创建")
+
+    -- 3. 分离帽子（使它们掉落）
+    self:DetachHats()
+    task.wait(0.2)
+
+    -- 4. 启动更新循环
+    self.running = true
+    self.heartbeatConn = RunService.Heartbeat:Connect(function(dt)
+        self:Update(dt)
+    end)
+
+    Util.Notify("✅ 帽子分身运行中，共 "..#self:GetAllHats().." 个帽子")
+end
+
+function HatManager:Stop()
+    self.running = false
+    if self.heartbeatConn then
+        self.heartbeatConn:Disconnect()
+        self.heartbeatConn = nil
+    end
+    if self.cloneChar then
+        self.cloneChar:Destroy()
+        self.cloneChar = nil
+    end
+    -- 恢复帽子状态（可选）
+    for _,hat in ipairs(self:GetAllHats()) do
+        if sethiddenproperty then
+            pcall(sethiddenproperty, hat, "BackendAccoutrementState", 4) -- Equipped
+        else
+            pcall(function() hat.BackendAccoutrementState = 4 end)
+        end
+        local handle = hat:FindFirstChild("Handle")
+        if handle then handle.CanCollide = false end
+    end
+    Util.Notify("⏹ 已停止")
+end
+
+-- ========== 创建UI ==========
 local HiddenGui = gethiddengui() or CoreGui
 local ScreenGui = Util.Instance("ScreenGui", HiddenGui)
-ScreenGui.Name = "HatFlingGUI"
+ScreenGui.Name = "HatFlingCompleteGUI"
 ScreenGui.IgnoreGuiInset = true
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.DisplayOrder = 2147483647
@@ -101,7 +399,7 @@ ScreenGui.DisplayOrder = 2147483647
 local MainFrame = Util.Instance("Frame", ScreenGui)
 MainFrame.AnchorPoint = Vector2.new(0.5,0.5)
 MainFrame.Position = UDim2.new(0.5,0,0.5,0)
-MainFrame.Size = UDim2.new(0,400,0,300)
+MainFrame.Size = UDim2.new(0,450,0,350)
 MainFrame.BackgroundColor3 = Color3.new(0,0,0)
 MainFrame.BackgroundTransparency = 0.1
 MainFrame.BorderSizePixel = 1
@@ -110,7 +408,7 @@ local UICorner = Util.Instance("UICorner", MainFrame)
 UICorner.CornerRadius = UDim.new(0,8)
 
 -- 拖动
-local dragToggle,dragStart,dragPos = false, nil, nil
+local dragToggle, dragStart, dragPos = false, nil, nil
 MainFrame.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         dragToggle = true
@@ -147,7 +445,7 @@ end)
 UserInputService.InputChanged:Connect(function(input)
     if resizeStart and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         local delta = input.Position - resizeStart
-        MainFrame.Size = UDim2.new(0, math.max(300, resizeSize.X.Offset + delta.X), 0, math.max(200, resizeSize.Y.Offset + delta.Y))
+        MainFrame.Size = UDim2.new(0, math.max(350, resizeSize.X.Offset + delta.X), 0, math.max(250, resizeSize.Y.Offset + delta.Y))
     end
 end)
 UserInputService.InputEnded:Connect(function(input)
@@ -156,9 +454,9 @@ UserInputService.InputEnded:Connect(function(input)
     end
 end)
 
--- 标题
+-- 标题栏
 local TitleBar = Util.Instance("Frame", MainFrame)
-TitleBar.Size = UDim2.new(1,0,0,30)
+TitleBar.Size = UDim2.new(1,0,0,35)
 TitleBar.BackgroundColor3 = Color3.new(0.2,0.2,0.2)
 TitleBar.BorderSizePixel = 0
 local TitleText = Util.Instance("TextLabel", TitleBar)
@@ -168,20 +466,20 @@ TitleText.Size = UDim2.new(1,-40,1,0)
 TitleText.BackgroundTransparency = 1
 TitleText.Font = Enum.Font.GothamBold
 TitleText.TextColor3 = Color3.new(1,1,1)
-TitleText.TextSize = 18
+TitleText.TextSize = 20
 TitleText.TextXAlignment = Enum.TextXAlignment.Left
-TitleText.Text = "🎩 帽子分身控制"
+TitleText.Text = "🎩 帽子甩飞 + 透明分身"
 
 local CloseBtn = Util.Instance("TextButton", TitleBar)
 CloseBtn.AnchorPoint = Vector2.new(1,0.5)
 CloseBtn.Position = UDim2.new(1,-10,0.5,0)
-CloseBtn.Size = UDim2.new(0,20,0,20)
+CloseBtn.Size = UDim2.new(0,24,0,24)
 CloseBtn.BackgroundColor3 = Color3.new(1,0.3,0.3)
 CloseBtn.Text = "X"
 CloseBtn.TextColor3 = Color3.new(1,1,1)
-CloseBtn.TextSize = 16
+CloseBtn.TextSize = 18
 CloseBtn.BorderSizePixel = 0
-Util.Instance("UICorner", CloseBtn).CornerRadius = UDim.new(0,3)
+Util.Instance("UICorner", CloseBtn).CornerRadius = UDim.new(0,4)
 CloseBtn.MouseButton1Click:Connect(function() MainFrame.Visible = false end)
 
 -- 内容区
@@ -201,7 +499,7 @@ UIList.HorizontalAlignment = Enum.HorizontalAlignment.Center
 
 local function AddButton(text, callback)
     local btn = Util.Instance("TextButton", Content)
-    btn.Size = UDim2.new(1,-10,0,35)
+    btn.Size = UDim2.new(1,-10,0,40)
     btn.BackgroundColor3 = Color3.new(0.3,0.3,0.3)
     btn.Text = text
     btn.TextColor3 = Color3.new(1,1,1)
@@ -213,7 +511,7 @@ local function AddButton(text, callback)
 end
 local function AddSwitch(text, default, callback)
     local container = Util.Instance("Frame", Content)
-    container.Size = UDim2.new(1,-10,0,35)
+    container.Size = UDim2.new(1,-10,0,40)
     container.BackgroundTransparency = 1
     local lbl = Util.Instance("TextLabel", container)
     lbl.AnchorPoint = Vector2.new(0,0.5)
@@ -227,7 +525,7 @@ local function AddSwitch(text, default, callback)
     local sw = Util.Instance("TextButton", container)
     sw.AnchorPoint = Vector2.new(1,0.5)
     sw.Position = UDim2.new(1,-5,0.5,0)
-    sw.Size = UDim2.new(0,50,0,25)
+    sw.Size = UDim2.new(0,50,0,30)
     sw.BackgroundColor3 = default and Color3.new(0,1,0) or Color3.new(0.5,0.5,0.5)
     sw.Text = default and "ON" or "OFF"
     sw.TextColor3 = Color3.new(1,1,1)
@@ -244,228 +542,19 @@ local function AddSwitch(text, default, callback)
     return state
 end
 
--- ========== 核心帽子重动画模块 ==========
-local HatReanimator = {
-    Enabled = false,
-    Hats = {},
-    FlingTargets = {},
-    HatCollide = true,
-    Permadeath = true,
-    NetlessVelocity = 26,
-    UseAngularVelocity = true,
-    UsePatchmaLikeNetless = false,
-    FollowMouse = true,
-    ClumpCenter = nil,
-}
-
--- 设置Accoutrement状态
-local BackendAccoutrementState = {None=0, HasHandle=1, InWorkspace=2, InCharacter=3, Equipped=4}
-local function SetAccoutrementState(acc, state)
-    if sethiddenproperty then
-        pcall(sethiddenproperty, acc, "BackendAccoutrementState", state)
-    else
-        pcall(function() acc.BackendAccoutrementState = state end)
-    end
-end
-
--- 获取所有帽子
-local function GetAllHats()
-    local hats = {}
-    local char = Player.Character
-    if char then
-        for _,v in ipairs(char:GetChildren()) do
-            if v:IsA("Accessory") then
-                table.insert(hats, v)
-            end
-        end
-    end
-    return hats
-end
-
--- 设置帽子CFrame（netless移动）
-local function SetHatCFrameNetless(handle, dt, targetCF, spin)
-    if not (handle and handle:IsA("BasePart") and handle:IsDescendantOf(workspace)) then return false end
-    if dt <= 0 then return false end
-    local timing = os.clock()
-    local idle = Vector3.new(math.sin(timing*14), math.sin(timing*15+1.0472), math.sin(timing*16+2.0944)) * 0.001
-    if targetCF.Y < FallenPartsDestroyHeight+5 then
-        targetCF = targetCF + Vector3.new(0, FallenPartsDestroyHeight+5 - targetCF.Y, 0)
-    end
-    local speedlimit = 16384
-    local netless = HatReanimator.NetlessVelocity
-    if not IsNetworkOwner(handle) then return false end
-    pcall(sethiddenproperty, handle, "NetworkIsSleeping", false)
-    local lastCF = handle:GetAttribute("_LastCF") or handle.CFrame
-    local vel = (targetCF.Position - lastCF.Position) / dt
-    if vel.Magnitude > speedlimit then
-        vel = vel.Unit * speedlimit
-        targetCF = lastCF.Rotation + (lastCF.Position + vel * dt)
-    end
-    handle:SetAttribute("_LastCF", targetCF)
-    handle.CFrame = targetCF
-    if HatReanimator.UsePatchmaLikeNetless then
-        handle.AssemblyLinearVelocity = Vector3.new(vel.X*10, netless, vel.Z*10)
-    else
-        handle.AssemblyLinearVelocity = Vector3.new(vel.X, math.max(vel.Y, netless), vel.Z)
-    end
-    if spin then
-        handle.AssemblyAngularVelocity = Vector3.new(16384,16384,16384)
-    elseif HatReanimator.UseAngularVelocity then
-        handle.AssemblyAngularVelocity = rvel + idle
-    else
-        handle.AssemblyAngularVelocity = idle
-    end
-    return true
-end
-
--- 永久死亡
-local function PermaDeath()
-    if not replicatesignal then
-        Util.Notify("⚠️ 执行器不支持replicatesignal，永久死亡不可用")
-        return false
-    end
-    pcall(replicatesignal, Player.ConnectDiedSignalBackend)
-    return true
-end
-
--- 更新帽子位置（每帧调用）
-local function UpdateHats(dt)
-    if not HatReanimator.Enabled or not Player.Character then return end
-    local hats = GetAllHats()
-    HatReanimator.Hats = hats
-    if #hats == 0 then return end
-
-    -- 计算聚集中心（鼠标位置或原位置）
-    local centerPos
-    if HatReanimator.FollowMouse then
-        local mousePos = UserInputService:GetMouseLocation()
-        local ray = Camera:ScreenPointToRay(mousePos.X, mousePos.Y)
-        local params = RaycastParams.new()
-        params.FilterType = Enum.RaycastFilterType.Blacklist
-        params.FilterDescendantsInstances = {Player.Character}
-        local result = workspace:Raycast(ray.Origin, ray.Direction * 1000, params)
-        centerPos = result and result.Position or (ray.Origin + ray.Direction * 500)
-    else
-        centerPos = HatReanimator.ClumpCenter or (Player.Character and Player.Character:GetPivot().Position) or Vector3.zero
-    end
-    local targetCF = CFrame.lookAt(centerPos, centerPos + Camera.CFrame.LookVector)
-
-    -- 处理甩飞目标
-    local flingTarget = HatReanimator.FlingTargets[1]
-    if flingTarget then
-        if flingTarget.Time and os.clock() > flingTarget.Time then
-            table.remove(HatReanimator.FlingTargets,1)
-            flingTarget = nil
-        elseif not flingTarget.Time then
-            flingTarget.Time = os.clock() + (flingTarget.Duration or 2)
-        end
-    end
-
-    for i, hat in ipairs(hats) do
-        local handle = hat:FindFirstChild("Handle")
-        if handle and handle:IsA("BasePart") then
-            if flingTarget then
-                -- 甩飞模式：飞向目标
-                local targPos = flingTarget.Target:GetPivot().Position
-                local dir = (targPos - handle.Position).Unit
-                local look = CFrame.lookAt(handle.Position, targPos)
-                SetHatCFrameNetless(handle, dt, look, true)
-            else
-                -- 普通模式：围绕中心点旋转
-                local radius = 2 + i*0.3
-                local angle = (i / #hats) * math.pi*2 + os.clock()*0.8
-                local offset = Vector3.new(math.cos(angle)*radius, math.sin(os.clock()*2)*0.5, math.sin(angle)*radius)
-                local finalCF = targetCF * CFrame.new(offset)
-                SetHatCFrameNetless(handle, dt, finalCF, false)
-            end
-        end
-    end
-end
-
-function HatReanimator:Start()
-    if self.Enabled then return end
-    self.Enabled = true
-
-    -- 检查是否有帽子
-    if #GetAllHats() == 0 then
-        Util.Notify("⚠️ 当前角色没有佩戴任何帽子")
-        self.Enabled = false
-        return
-    end
-
-    -- 永久死亡
-    if self.Permadeath then
-        PermaDeath()
-    end
-
-    -- 强制所有帽子掉落
-    for _,hat in ipairs(GetAllHats()) do
-        SetAccoutrementState(hat, BackendAccoutrementState.InWorkspace)
-        local handle = hat:FindFirstChild("Handle")
-        if handle then
-            handle.CanCollide = self.HatCollide
-        end
-    end
-
-    -- 启动循环
-    self.HeartbeatConn = RunService.Heartbeat:Connect(function(dt)
-        UpdateHats(dt)
-    end)
-
-    Util.Notify("✅ 帽子分身已启动，共 "..#GetAllHats().." 个帽子")
-end
-
-function HatReanimator:Stop()
-    self.Enabled = false
-    if self.HeartbeatConn then
-        self.HeartbeatConn:Disconnect()
-        self.HeartbeatConn = nil
-    end
-    -- 恢复帽子（可选）
-    for _,hat in ipairs(GetAllHats()) do
-        SetAccoutrementState(hat, BackendAccoutrementState.Equipped)
-        local handle = hat:FindFirstChild("Handle")
-        if handle then
-            handle.CanCollide = false
-        end
-    end
-    Util.Notify("⏹ 帽子分身已停止")
-end
-
-function HatReanimator:Fling(target, duration)
-    if not self.Enabled then
-        Util.Notify("请先启动分身")
-        return false
-    end
-    if typeof(target) == "Instance" and target:IsA("Model") then
-        table.insert(self.FlingTargets, {Target=target, Duration=duration})
-        Util.Notify("🎯 甩飞目标: "..target.Name)
-        return true
-    end
-    return false
-end
-
-function HatReanimator:ToggleCollide(state)
-    self.HatCollide = state
-    for _,hat in ipairs(GetAllHats()) do
-        local handle = hat:FindFirstChild("Handle")
-        if handle then handle.CanCollide = state end
-    end
-end
-
--- ========== 绑定UI按钮 ==========
-AddButton("▶ 启动帽子分身", function()
-    HatReanimator:Start()
+-- 绑定控制
+AddButton("▶ 启动永久死亡 & 创建分身", function()
+    HatManager:Start()
 end)
-AddButton("⏹ 停止分身", function()
-    HatReanimator:Stop()
+AddButton("⏹ 停止并清理", function()
+    HatManager:Stop()
 end)
 AddButton("🎯 甩飞鼠标指向目标", function()
     local mouse = Player:GetMouse()
     if mouse.Target then
         local target = mouse.Target:FindFirstAncestorOfClass("Model") or mouse.Target.Parent
         if target then
-            HatReanimator:Fling(target, 3)
+            HatManager:AddFlingTarget(target, 3)
         else
             Util.Notify("未找到目标模型")
         end
@@ -473,21 +562,25 @@ AddButton("🎯 甩飞鼠标指向目标", function()
         Util.Notify("没有指向任何物体")
     end
 end)
-AddButton("🧹 清除甩飞目标", function()
-    table.clear(HatReanimator.FlingTargets)
+AddButton("🧹 清空甩飞目标", function()
+    table.clear(HatManager.flingTargets)
     Util.Notify("甩飞队列已清空")
 end)
 
-AddSwitch("🔁 启用碰撞", HatReanimator.HatCollide, function(s)
-    HatReanimator:ToggleCollide(s)
+AddSwitch("🔁 启用帽子碰撞", HatManager.collideEnabled, function(s)
+    HatManager.collideEnabled = s
+    for _,hat in ipairs(HatManager:GetAllHats()) do
+        local handle = hat:FindFirstChild("Handle")
+        if handle then handle.CanCollide = s end
+    end
 end)
-AddSwitch("🖱 跟随鼠标", HatReanimator.FollowMouse, function(s)
-    HatReanimator.FollowMouse = s
+AddSwitch("🖱 跟随分身 (分身由鼠标移动)", true, function(s)
+    HatManager.followClone = s
 end)
 
 -- Netless速度调节
 local sliderContainer = Util.Instance("Frame", Content)
-sliderContainer.Size = UDim2.new(1,-10,0,35)
+sliderContainer.Size = UDim2.new(1,-10,0,40)
 sliderContainer.BackgroundTransparency = 1
 local sliderLabel = Util.Instance("TextLabel", sliderContainer)
 sliderLabel.AnchorPoint = Vector2.new(0,0.5)
@@ -496,29 +589,29 @@ sliderLabel.Size = UDim2.new(0.4,0,1,0)
 sliderLabel.BackgroundTransparency = 1
 sliderLabel.Text = "Netless速度"
 sliderLabel.TextColor3 = Color3.new(1,1,1)
-sliderLabel.TextSize = 14
+sliderLabel.TextSize = 16
 local sliderInput = Util.Instance("TextBox", sliderContainer)
 sliderInput.AnchorPoint = Vector2.new(1,0.5)
 sliderInput.Position = UDim2.new(1,-5,0.5,0)
-sliderInput.Size = UDim2.new(0,60,0,25)
+sliderInput.Size = UDim2.new(0,60,0,30)
 sliderInput.BackgroundColor3 = Color3.new(0.3,0.3,0.3)
-sliderInput.Text = tostring(HatReanimator.NetlessVelocity)
+sliderInput.Text = tostring(HatManager.netlessSpeed)
 sliderInput.TextColor3 = Color3.new(1,1,1)
-sliderInput.TextSize = 14
+sliderInput.TextSize = 16
 sliderInput.BorderSizePixel = 0
 Util.Instance("UICorner", sliderInput).CornerRadius = UDim.new(0,4)
 sliderInput.FocusLost:Connect(function()
     local n = tonumber(sliderInput.Text)
     if n then
-        HatReanimator.NetlessVelocity = math.clamp(n, 20, 100)
-        sliderInput.Text = tostring(HatReanimator.NetlessVelocity)
+        HatManager.netlessSpeed = math.clamp(n, 20, 100)
+        sliderInput.Text = tostring(HatManager.netlessSpeed)
     else
-        sliderInput.Text = tostring(HatReanimator.NetlessVelocity)
+        sliderInput.Text = tostring(HatManager.netlessSpeed)
     end
 end)
 
 -- 初始提示
-Util.Notify("🎩 帽子分身已加载，请点击启动")
+Util.Notify("🎩 完整版已加载，点击启动按钮")
 
 -- 显示UI
 MainFrame.Visible = true
