@@ -1,379 +1,541 @@
 --[[
-    Uhhhhhh Reanimate GUI - 超炫酷控制面板
-    功能：
-        - 一键进入永久死亡状态，捕获掉落帽子
-        - 帽子碰撞：让帽子成为物理障碍
-        - 帽子甩飞：将帽子作为导弹攻击目标
-        - 炫酷UI：动态渐变、发光、动画
-    环境需求：支持 sethiddenproperty / isnetworkowner 的执行器（Krnl, Synapse等）
+    帽子甩飞 & 帽子碰撞独立模块
+    基于 Uhhhhhh Reanimate 提取优化
+    特性：
+    - 永久死亡后自动获取所有饰品
+    - 可拖动/缩放的炫酷控制面板
+    - 一键切换帽子碰撞
+    - 鼠标点击目标甩飞
+    - 分身跟随鼠标移动
 ]]
 
-local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
-local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
-local LocalPlayer = Players.LocalPlayer
-local Mouse = LocalPlayer:GetMouse()
+if _G.HatFlingLoaded then return end
+_G.HatFlingLoaded = true
 
--- ==================== 辅助函数 ====================
-local function IsNetworkOwner(part)
-    return part and (isnetworkowner and isnetworkowner(part) or true) -- 若不存在则默认真
+-- 环境兼容
+cloneref = cloneref or function(o) return o end
+getcustomasset = getcustomasset or getsynasset
+gethiddengui = gethiddengui or function() return cloneref(game:GetService("CoreGui")) end
+isfile = isfile or function(p) local s,e=pcall(readfile,p); return s and e~=nil end
+writefile = writefile or function(p,d) return end
+delfile = delfile or function(p) return end
+listfiles = listfiles or function(p) return {} end
+
+-- 服务
+local Debris = cloneref(game:GetService("Debris"))
+local CoreGui = cloneref(game:GetService("CoreGui"))
+local Players = cloneref(game:GetService("Players"))
+local RunService = cloneref(game:GetService("RunService"))
+local UserInputService = cloneref(game:GetService("UserInputService"))
+local TweenService = cloneref(game:GetService("TweenService"))
+local HttpService = cloneref(game:GetService("HttpService"))
+local TextService = cloneref(game:GetService("TextService"))
+local StarterGui = cloneref(game:GetService("StarterGui"))
+local Camera = workspace.CurrentCamera
+
+local Player = Players.LocalPlayer
+local FallenPartsDestroyHeight = workspace.FallenPartsDestroyHeight or -500
+
+-- ========== 工具函数 ==========
+local Util = {}
+Util.RandomString = function(l)
+	l = l or 16
+	local s = ""
+	for _=1,l do s = s .. string.char(math.random(32,126)) end
+	return s
+end
+Util.Notify = function(t)
+	StarterGui:SetCore("SendNotification", {Title="HatFling", Text=t, Duration=3})
+end
+Util.Instance = function(c,p)
+	local i = Instance.new(c)
+	i.Name = Util.RandomString()
+	i.Parent = p
+	return i
+end
+Util.GetScreenSize = function()
+	return Camera and Camera.ViewportSize or Vector2.new(512,512)
+end
+Util.UDim2ToVector2Scale = function(u)
+	return Vector2.new(u.X.Scale, u.Y.Scale)
+end
+Util.Vector2ToUDim2Scale = function(v)
+	return UDim2.fromScale(v.X, v.Y)
+end
+Util.LinkDestroyI2I = function(a,b)
+	a.Destroying:Once(function() b:Destroy() end)
+end
+Util.LinkDestroyI2C = function(a,b)
+	a.Destroying:Once(function() b:Disconnect() end)
+end
+Util.IsGuiVisible = function(g)
+	while g do
+		if not g.Visible then return false end
+		g = g.Parent
+	end
+	return true
+end
+Util.DeepcopyTable = function(t)
+	local c = {}
+	for k,v in pairs(t) do
+		if type(v)=="table" then v=Util.DeepcopyTable(v) end
+		c[k]=v
+	end
+	return c
 end
 
-local function SetUACFrameNetless(handle, dt, targetCF, extraVel, spin)
-    if not IsNetworkOwner(handle) then return false end
-    local vel = (targetCF.Position - handle.Position) / dt
-    if vel.Magnitude > 16384 then vel = vel.Unit * 16384 end
-    handle.CFrame = targetCF
-    handle.AssemblyLinearVelocity = vel + (extraVel or Vector3.new())
-    if spin then
-        handle.AssemblyAngularVelocity = Vector3.new(16384, 16384, 16384)
-    end
-    return true
-end
-
--- ==================== 核心状态 ====================
-local Reanim = {
-    Active = false,               -- 是否已进入死亡状态
-    DeadParts = {},               -- 死亡后掉落的帽子Handle列表
-    FlingTarget = nil,            -- 当前甩飞目标
-    FlingConn = nil,              -- 甩飞循环连接
-    CollideEnabled = false,
-    FlingEnabled = false,
-    SelectedMethod = "All",       -- 甩飞方法: "All" / "Biggest" / "Tool"
-}
-
--- ==================== UI 构建 ====================
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "UhhhhhhGUI"
+-- ========== 炫酷UI辅助（沿用原Uhhhhhh风格） ==========
+local HiddenGui = gethiddengui() or CoreGui
+local ScreenGui = Util.Instance("ScreenGui", HiddenGui)
+ScreenGui.Name = "HatFlingGUI"
+ScreenGui.IgnoreGuiInset = true
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-ScreenGui.ResetOnSpawn = false
-ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+ScreenGui.DisplayOrder = 2147483647
 
--- 主框架 (炫酷半透明背景)
-local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 320, 0, 260)
-MainFrame.Position = UDim2.new(0.5, -160, 0.5, -130)
-MainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
-MainFrame.BackgroundTransparency = 0.2
-MainFrame.BorderSizePixel = 0
-MainFrame.Parent = ScreenGui
-
--- 圆角 + 阴影
-local UICorner = Instance.new("UICorner")
-UICorner.CornerRadius = UDim.new(0, 12)
-UICorner.Parent = MainFrame
-
-local UIStroke = Instance.new("UIStroke")
-UIStroke.Color = Color3.fromRGB(0, 200, 255)
-UIStroke.Thickness = 1.5
-UIStroke.Transparency = 0.6
-UIStroke.Parent = MainFrame
+local MainFrame = Util.Instance("Frame", ScreenGui)
+MainFrame.AnchorPoint = Vector2.new(0.5,0.5)
+MainFrame.Position = UDim2.new(0.5,0,0.5,0)
+MainFrame.Size = UDim2.new(0,400,0,300)
+MainFrame.BackgroundColor3 = Color3.new(0,0,0)
+MainFrame.BorderSizePixel = 1
+MainFrame.BorderColor3 = Color3.new(1,1,1)
+local UICorner = Util.Instance("UICorner", MainFrame)
+UICorner.CornerRadius = UDim.new(0,6)
 
 -- 拖动功能
-local DragDetector = Instance.new("DragDetector")  -- 某些执行器可能没有，可用UserInputService模拟，此处简化
-DragDetector.Parent = MainFrame
--- 如果DragDetector不可用，可用经典拖动代码，但为了简洁略过
-
--- 标题
-local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, 0, 0, 40)
-Title.Position = UDim2.new(0, 0, 0, 0)
-Title.BackgroundTransparency = 1
-Title.Text = "⚡ UHHHHH REANIMATE ⚡"
-Title.TextColor3 = Color3.fromRGB(0, 230, 255)
-Title.TextStrokeTransparency = 0.3
-Title.TextScaled = true
-Title.Font = Enum.Font.GothamBold
-Title.Parent = MainFrame
-
--- 装饰光条
-local TopGlow = Instance.new("Frame")
-TopGlow.Size = UDim2.new(1, -20, 0, 3)
-TopGlow.Position = UDim2.new(0, 10, 0, 40)
-TopGlow.BackgroundColor3 = Color3.fromRGB(0, 200, 255)
-TopGlow.BorderSizePixel = 0
-TopGlow.Parent = MainFrame
-local GlowCorner = Instance.new("UICorner")
-GlowCorner.CornerRadius = UDim.new(0, 4)
-GlowCorner.Parent = TopGlow
-
--- 状态指示
-local StatusText = Instance.new("TextLabel")
-StatusText.Size = UDim2.new(1, -20, 0, 25)
-StatusText.Position = UDim2.new(0, 10, 0, 50)
-StatusText.BackgroundTransparency = 1
-StatusText.Text = "⛔ 未激活"
-StatusText.TextColor3 = Color3.fromRGB(255, 80, 80)
-StatusText.TextXAlignment = Enum.TextXAlignment.Left
-StatusText.TextScaled = true
-StatusText.Font = Enum.Font.Gotham
-StatusText.Parent = MainFrame
-
--- 按钮容器
-local ButtonHolder = Instance.new("Frame")
-ButtonHolder.Size = UDim2.new(1, -20, 0, 120)
-ButtonHolder.Position = UDim2.new(0, 10, 0, 85)
-ButtonHolder.BackgroundTransparency = 1
-ButtonHolder.Parent = MainFrame
-
--- 创建按钮函数
-local function createButton(text, pos, color)
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0.5, -5, 0, 35)
-    btn.Position = pos
-    btn.Text = text
-    btn.TextColor3 = Color3.new(1,1,1)
-    btn.TextScaled = true
-    btn.Font = Enum.Font.GothamBold
-    btn.BackgroundColor3 = color
-    btn.BorderSizePixel = 0
-    btn.Parent = ButtonHolder
-
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 8)
-    corner.Parent = btn
-
-    local stroke = Instance.new("UIStroke")
-    stroke.Color = Color3.fromRGB(255,255,255)
-    stroke.Thickness = 1
-    stroke.Transparency = 0.7
-    stroke.Parent = btn
-
-    -- 悬停动画
-    btn.MouseEnter:Connect(function()
-        TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = color:Lerp(Color3.new(1,1,1), 0.3)}):Play()
-    end)
-    btn.MouseLeave:Connect(function()
-        TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = color}):Play()
-    end)
-    return btn
+local dragToggle,dragSpeed,dragStart,dragPos = nil,0.25, nil, nil
+local function updateDrag(input)
+	local delta = input.Position - dragStart
+	local pos = UDim2.new(dragPos.X.Scale, dragPos.X.Offset + delta.X, dragPos.Y.Scale, dragPos.Y.Offset + delta.Y)
+	MainFrame:TweenPosition(pos, Enum.EasingDirection.Out, Enum.EasingStyle.Linear, dragSpeed, true)
 end
-
--- 放置按钮：两列
-local btn1 = createButton("💀 死亡", UDim2.new(0, 0, 0, 0), Color3.fromRGB(180, 0, 0))      -- 激活死亡
-local btn2 = createButton("🎯 碰撞", UDim2.new(0.5, 5, 0, 0), Color3.fromRGB(0, 100, 180))  -- 帽子碰撞
-local btn3 = createButton("🚀 甩飞", UDim2.new(0, 0, 0, 40), Color3.fromRGB(0, 150, 50))    -- 开启甩飞
-local btn4 = createButton("⚙️ 方法", UDim2.new(0.5, 5, 0, 40), Color3.fromRGB(150, 75, 0))  -- 切换方法
-local btn5 = createButton("🎯 选目标", UDim2.new(0, 0, 0, 80), Color3.fromRGB(200, 0, 200)) -- 选择目标
-local btn6 = createButton("⏹️ 停止", UDim2.new(0.5, 5, 0, 80), Color3.fromRGB(100, 100, 100))-- 停止所有
-
--- 方法显示
-local MethodLabel = Instance.new("TextLabel")
-MethodLabel.Size = UDim2.new(1, 0, 0, 20)
-MethodLabel.Position = UDim2.new(0, 0, 1, -25)
-MethodLabel.BackgroundTransparency = 1
-MethodLabel.Text = "当前甩飞方法: All"
-MethodLabel.TextColor3 = Color3.fromRGB(200,200,200)
-MethodLabel.TextScaled = true
-MethodLabel.Font = Enum.Font.Gotham
-MethodLabel.Parent = MainFrame
-
--- ==================== 功能实现 ====================
-
--- 捕获掉落的帽子 (当角色子级移除时)
-local function onChildRemoved(child)
-    if not Reanim.Active then return end
-    if child:IsA("Accessory") then
-        local handle = child:FindFirstChild("Handle")
-        if handle then
-            -- 帽子已移动到工作区
-            handle.CanCollide = true
-            handle.Anchored = false
-            table.insert(Reanim.DeadParts, handle)
-            StatusText.Text = "🎩 帽子 +1  总数: "..#Reanim.DeadParts
-        end
-    end
-end
-
--- 进入永久死亡状态
-local function activateDeath()
-    if Reanim.Active then return end
-    local char = LocalPlayer.Character
-    if not char then return end
-
-    -- 断开连接以防后续监听
-    if Reanim.DeathConn then Reanim.DeathConn:Disconnect() end
-
-    -- 监听帽子掉落
-    Reanim.DeathConn = char.ChildRemoved:Connect(onChildRemoved)
-
-    -- 杀死角色 (通过设置健康为0并移除Humanoid)
-    local humanoid = char:FindFirstChild("Humanoid")
-    if humanoid then
-        humanoid.Health = 0
-        humanoid:Destroy()  -- 移除Humanoid防止重生和清理
-    end
-
-    -- 将角色部件移动到工作区（避免被删除）
-    for _, part in ipairs(char:GetChildren()) do
-        if part:IsA("BasePart") then
-            part.Parent = Workspace
-            part.CanCollide = true
-            part.Anchored = false
-        elseif part:IsA("Accessory") then
-            -- 配件也会被移除，由监听处理
-        end
-    end
-
-    -- 隐藏角色模型（可选）
-    char:Destroy()  -- 彻底移除空壳
-
-    Reanim.Active = true
-    StatusText.Text = "💀 死亡模式激活  帽子: "..#Reanim.DeadParts
-    print("已进入永久死亡状态，等待帽子掉落...")
-end
-
--- 启用帽子碰撞 (对所有捕获的帽子设置CanCollide)
-local function enableCollide()
-    if not Reanim.Active then
-        StatusText.Text = "⚠️ 请先激活死亡模式"
-        return
-    end
-    Reanim.CollideEnabled = not Reanim.CollideEnabled
-    if Reanim.CollideEnabled then
-        for _, handle in ipairs(Reanim.DeadParts) do
-            if handle and handle.Parent then
-                handle.CanCollide = true
-            end
-        end
-        StatusText.Text = "🛡️ 帽子碰撞已开启"
-    else
-        for _, handle in ipairs(Reanim.DeadParts) do
-            if handle and handle.Parent then
-                handle.CanCollide = false
-            end
-        end
-        StatusText.Text = "🛡️ 帽子碰撞已关闭"
-    end
-end
-
--- 选择目标 (鼠标点击)
-local function selectTarget()
-    if not Reanim.Active then StatusText.Text = "⚠️ 请先激活死亡模式" return end
-    StatusText.Text = "🎯 点击一个部件选择目标"
-    local conn
-    conn = Mouse.Button1Down:Connect(function()
-        local target = Mouse.Target
-        if target then
-            Reanim.FlingTarget = target
-            StatusText.Text = "🎯 目标: "..target.Name
-            -- 高亮目标 (简单加个方框)
-            local highlight = Instance.new("SelectionBox")
-            highlight.Adornee = target
-            highlight.Color3 = Color3.fromRGB(255, 0, 0)
-            highlight.LineThickness = 0.1
-            highlight.Transparency = 0.5
-            highlight.Parent = Workspace
-            game:GetService("Debris"):AddItem(highlight, 2)
-        else
-            StatusText.Text = "❌ 未选中有效部件"
-        end
-        conn:Disconnect()
-    end)
-end
-
--- 切换甩飞方法
-local methods = {"All", "Biggest", "Tool"}
-local methodIndex = 1
-local function switchMethod()
-    methodIndex = methodIndex % 3 + 1
-    Reanim.SelectedMethod = methods[methodIndex]
-    MethodLabel.Text = "当前甩飞方法: "..Reanim.SelectedMethod
-end
-
--- 获取当前方法对应的帽子列表
-local function getFlingParts()
-    local parts = {}
-    if Reanim.SelectedMethod == "All" then
-        return Reanim.DeadParts
-    elseif Reanim.SelectedMethod == "Biggest" then
-        local biggest = nil
-        local maxSize = 0
-        for _, h in ipairs(Reanim.DeadParts) do
-            if h and h.Parent then
-                local s = h.Size.Magnitude
-                if s > maxSize then
-                    maxSize = s
-                    biggest = h
-                end
-            end
-        end
-        if biggest then table.insert(parts, biggest) end
-        return parts
-    else -- "Tool"
-        -- 找玩家手中的工具 (但死亡后无角色，可改为上次使用的工具，这里简单返回空)
-        return {}
-    end
-end
-
--- 开启甩飞循环
-local function startFling()
-    if not Reanim.Active then StatusText.Text = "⚠️ 请先激活死亡模式" return end
-    if not Reanim.FlingTarget then StatusText.Text = "🎯 请先选择目标" return end
-
-    if Reanim.FlingConn then Reanim.FlingConn:Disconnect() end
-
-    Reanim.FlingEnabled = true
-    StatusText.Text = "🚀 甩飞已启动 -> "..Reanim.FlingTarget.Name
-
-    Reanim.FlingConn = RunService.Heartbeat:Connect(function(dt)
-        if not Reanim.FlingTarget or not Reanim.FlingTarget.Parent then
-            StatusText.Text = "❌ 目标消失，停止甩飞"
-            Reanim.FlingEnabled = false
-            Reanim.FlingConn:Disconnect()
-            Reanim.FlingConn = nil
-            return
-        end
-
-        -- 预测目标位置（简单预测）
-        local targetPos = Reanim.FlingTarget.Position
-        local targetVel = Reanim.FlingTarget.AssemblyLinearVelocity
-        local futurePos = targetPos + targetVel * 0.3  -- 预测0.3秒后
-
-        local parts = getFlingParts()
-        for _, handle in ipairs(parts) do
-            if handle and handle.Parent then
-                local dir = (futurePos - handle.Position).Unit
-                local targetCF = CFrame.lookAt(handle.Position, handle.Position + dir) * CFrame.new(0,0,-3)
-                SetUACFrameNetless(handle, dt, targetCF, Vector3.new(), true)  -- 旋转
-            end
-        end
-    end)
-end
-
--- 停止所有
-local function stopAll()
-    if Reanim.FlingConn then
-        Reanim.FlingConn:Disconnect()
-        Reanim.FlingConn = nil
-    end
-    Reanim.FlingEnabled = false
-    Reanim.CollideEnabled = false
-    StatusText.Text = "⏹️ 已停止"
-end
-
--- ==================== 绑定按钮事件 ====================
-btn1.MouseButton1Click:Connect(activateDeath)
-btn2.MouseButton1Click:Connect(enableCollide)
-btn3.MouseButton1Click:Connect(startFling)
-btn4.MouseButton1Click:Connect(switchMethod)
-btn5.MouseButton1Click:Connect(selectTarget)
-btn6.MouseButton1Click:Connect(stopAll)
-
--- 初始状态
-MethodLabel.Text = "当前甩飞方法: All"
-StatusText.Text = "⛔ 未激活"
-
--- ==================== 清理函数 ====================
-LocalPlayer.CharacterAdded:Connect(function()  -- 如果重生，重置状态
-    Reanim.Active = false
-    Reanim.DeadParts = {}
-    Reanim.FlingTarget = nil
-    if Reanim.FlingConn then Reanim.FlingConn:Disconnect() end
-    StatusText.Text = "⛔ 未激活"
+MainFrame.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragToggle = true
+		dragStart = input.Position
+		dragPos = MainFrame.Position
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then dragToggle = false end
+		end)
+	end
+end)
+UserInputService.InputChanged:Connect(function(input)
+	if dragToggle and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		updateDrag(input)
+	end
 end)
 
--- 提示
-print("Uhhhhhh Reanimate GUI 已加载！使用UI控制永久死亡和帽子技能。")
+-- 缩放功能（右下角拖拽）
+local resizeHandle = Util.Instance("Frame", MainFrame)
+resizeHandle.AnchorPoint = Vector2.new(1,1)
+resizeHandle.Position = UDim2.new(1,-10,1,-10)
+resizeHandle.Size = UDim2.new(0,20,0,20)
+resizeHandle.BackgroundColor3 = Color3.new(1,1,1)
+resizeHandle.BackgroundTransparency = 0.5
+resizeHandle.BorderSizePixel = 0
+Util.Instance("UICorner", resizeHandle).CornerRadius = UDim.new(0,3)
+local resizeStart, resizeSize
+resizeHandle.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		resizeStart = input.Position
+		resizeSize = MainFrame.Size
+	end
+end)
+UserInputService.InputChanged:Connect(function(input)
+	if resizeStart and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		local delta = input.Position - resizeStart
+		local newWidth = math.max(200, resizeSize.X.Offset + delta.X)
+		local newHeight = math.max(150, resizeSize.Y.Offset + delta.Y)
+		MainFrame.Size = UDim2.new(0,newWidth,0,newHeight)
+	end
+end)
+UserInputService.InputEnded:Connect(function(input)
+	if resizeStart and (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then
+		resizeStart = nil
+	end
+end)
+
+-- 标题栏
+local TitleBar = Util.Instance("Frame", MainFrame)
+TitleBar.Size = UDim2.new(1,0,0,30)
+TitleBar.BackgroundColor3 = Color3.new(0.2,0.2,0.2)
+TitleBar.BorderSizePixel = 0
+local TitleText = Util.Instance("TextLabel", TitleBar)
+TitleText.AnchorPoint = Vector2.new(0,0.5)
+TitleText.Position = UDim2.new(0,10,0.5,0)
+TitleText.Size = UDim2.new(1,-40,1,0)
+TitleText.BackgroundTransparency = 1
+TitleText.Font = Enum.Font.GothamBold
+TitleText.TextColor3 = Color3.new(1,1,1)
+TitleText.TextSize = 18
+TitleText.TextXAlignment = Enum.TextXAlignment.Left
+TitleText.Text = "🎩 帽子分身控制"
+
+-- 关闭按钮
+local CloseBtn = Util.Instance("TextButton", TitleBar)
+CloseBtn.AnchorPoint = Vector2.new(1,0.5)
+CloseBtn.Position = UDim2.new(1,-10,0.5,0)
+CloseBtn.Size = UDim2.new(0,20,0,20)
+CloseBtn.BackgroundColor3 = Color3.new(1,0.3,0.3)
+CloseBtn.Text = "X"
+CloseBtn.TextColor3 = Color3.new(1,1,1)
+CloseBtn.TextSize = 16
+CloseBtn.BorderSizePixel = 0
+Util.Instance("UICorner", CloseBtn).CornerRadius = UDim.new(0,3)
+CloseBtn.MouseButton1Click:Connect(function() MainFrame.Visible = false end)
+
+-- 内容区
+local Content = Util.Instance("Frame", MainFrame)
+Content.AnchorPoint = Vector2.new(0.5,1)
+Content.Position = UDim2.new(0.5,0,1,-5)
+Content.Size = UDim2.new(1,-20,0,25)
+Content.BackgroundColor3 = Color3.new(0.1,0.1,0.1)
+Content.BorderSizePixel = 0
+Util.Instance("UICorner", Content).CornerRadius = UDim.new(0,5)
+Content.AutomaticSize = Enum.AutomaticSize.Y
+
+local UIList = Util.Instance("UIListLayout", Content)
+UIList.Padding = UDim.new(0,5)
+UIList.FillDirection = Enum.FillDirection.Vertical
+UIList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+UIList.VerticalAlignment = Enum.VerticalAlignment.Top
+
+local function AddButton(text, callback)
+	local btn = Util.Instance("TextButton", Content)
+	btn.Size = UDim2.new(1,-10,0,30)
+	btn.BackgroundColor3 = Color3.new(0.3,0.3,0.3)
+	btn.Text = text
+	btn.TextColor3 = Color3.new(1,1,1)
+	btn.TextSize = 16
+	btn.BorderSizePixel = 0
+	Util.Instance("UICorner", btn).CornerRadius = UDim.new(0,4)
+	btn.MouseButton1Click:Connect(callback)
+	return btn
+end
+local function AddSwitch(text, default, callback)
+	local container = Util.Instance("Frame", Content)
+	container.Size = UDim2.new(1,-10,0,30)
+	container.BackgroundTransparency = 1
+	local lbl = Util.Instance("TextLabel", container)
+	lbl.AnchorPoint = Vector2.new(0,0.5)
+	lbl.Position = UDim2.new(0,5,0.5,0)
+	lbl.Size = UDim2.new(0.7,0,1,0)
+	lbl.BackgroundTransparency = 1
+	lbl.Text = text
+	lbl.TextColor3 = Color3.new(1,1,1)
+	lbl.TextSize = 16
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	local sw = Util.Instance("TextButton", container)
+	sw.AnchorPoint = Vector2.new(1,0.5)
+	sw.Position = UDim2.new(1,-5,0.5,0)
+	sw.Size = UDim2.new(0,50,0,25)
+	sw.BackgroundColor3 = default and Color3.new(0,1,0) or Color3.new(0.5,0.5,0.5)
+	sw.Text = default and "ON" or "OFF"
+	sw.TextColor3 = Color3.new(1,1,1)
+	sw.TextSize = 14
+	sw.BorderSizePixel = 0
+	Util.Instance("UICorner", sw).CornerRadius = UDim.new(0,4)
+	local state = default
+	sw.MouseButton1Click:Connect(function()
+		state = not state
+		sw.BackgroundColor3 = state and Color3.new(0,1,0) or Color3.new(0.5,0.5,0.5)
+		sw.Text = state and "ON" or "OFF"
+		callback(state)
+	end)
+	return state
+end
+
+-- ========== 核心帽子重动画模块 ==========
+local HatReanimator = {
+	Enabled = false,
+	Hats = {},           -- 当前控制的帽子（Accessory实例）
+	FlingTargets = {},   -- 甩飞目标队列
+	HatCollide = true,   -- 启用碰撞
+	Permadeath = true,   -- 启用永久死亡
+	NetlessVelocity = 26,
+	UseAngularVelocity = true,
+	UsePatchmaLikeNetless = false,
+	FollowMouse = true,  -- 分身跟随鼠标
+	ClumpCenter = nil,   -- 帽子聚集中心（CFrame）
+}
+
+-- 辅助函数：判断是否是网络拥有者
+local function IsNetworkOwner(part)
+	if isnetworkowner then
+		local s,d = pcall(isnetworkowner, part)
+		if s then return d end
+	end
+	return part.ReceiveAge == 0
+end
+
+-- 设置Accoutrement状态（隐藏/显示）
+local BackendAccoutrementState = {None=0, HasHandle=1, InWorkspace=2, InCharacter=3, Equipped=4}
+local function SetAccoutrementState(acc, state)
+	if sethiddenproperty then
+		sethiddenproperty(acc, "BackendAccoutrementState", state)
+	else
+		pcall(function() acc.BackendAccoutrementState = state end)
+	end
+end
+
+-- 获取所有帽子（Accessory）
+local function GetAllHats()
+	local hats = {}
+	local char = Player.Character
+	if char then
+		for _,v in ipairs(char:GetChildren()) do
+			if v:IsA("Accessory") then
+				table.insert(hats, v)
+			end
+		end
+	end
+	return hats
+end
+
+-- 设置帽子网络控制（核心netless移动）
+local function SetHatCFrameNetless(handle, dt, targetCF, spin)
+	if not (handle and handle:IsA("BasePart") and handle:IsDescendantOf(workspace)) then return false end
+	if dt <= 0 then return false end
+	local timing = os.clock()
+	local idle = Vector3.new(math.sin(timing*14), math.sin(timing*15+1.0472), math.sin(timing*16+2.0944)) * 0.001
+	if targetCF.Y < FallenPartsDestroyHeight+5 then
+		targetCF = targetCF + Vector3.new(0, FallenPartsDestroyHeight+5 - targetCF.Y, 0)
+	end
+	local speedlimit = 16384
+	local netless = HatReanimator.NetlessVelocity
+	if not IsNetworkOwner(handle) then return false end
+	pcall(sethiddenproperty, handle, "NetworkIsSleeping", false)
+	local lastCF = handle:GetAttribute("_LastCF") or handle.CFrame
+	local vel = (targetCF.Position - lastCF.Position) / dt
+	if vel.Magnitude > speedlimit then
+		vel = vel.Unit * speedlimit
+		targetCF = lastCF.Rotation + (lastCF.Position + vel * dt)
+	end
+	local rvel = lastCF:ToObjectSpace(targetCF)
+	local a,b = rvel:ToAxisAngle()
+	rvel = (a * b) / dt
+	handle:SetAttribute("_LastCF", targetCF)
+	handle.CFrame = targetCF
+	if HatReanimator.UsePatchmaLikeNetless then
+		handle.AssemblyLinearVelocity = Vector3.new(vel.X*10, netless, vel.Z*10)
+	else
+		handle.AssemblyLinearVelocity = Vector3.new(vel.X, math.max(vel.Y, netless), vel.Z)
+	end
+	if spin then
+		handle.AssemblyAngularVelocity = Vector3.new(16384,16384,16384)
+	elseif HatReanimator.UseAngularVelocity then
+		handle.AssemblyAngularVelocity = rvel + idle
+	else
+		handle.AssemblyAngularVelocity = idle
+	end
+	return true
+end
+
+-- 永久死亡触发
+local function PermaDeath()
+	if not replicatesignal then
+		Util.Notify("executor不支持replicatesignal，无法永久死亡")
+		return false
+	end
+	replicatesignal(Player.ConnectDiedSignalBackend)
+	return true
+end
+
+-- 更新所有帽子位置
+local function UpdateHats(dt)
+	if not HatReanimator.Enabled or not Player.Character then return end
+	-- 获取当前所有帽子
+	local hats = GetAllHats()
+	HatReanimator.Hats = hats
+	if #hats == 0 then return end
+
+	-- 计算聚集中心
+	local centerPos
+	if HatReanimator.FollowMouse then
+		local mousePos = UserInputService:GetMouseLocation()
+		local ray = Camera:ScreenPointToRay(mousePos.X, mousePos.Y)
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Blacklist
+		params.FilterDescendantsInstances = {Player.Character}
+		local result = workspace:Raycast(ray.Origin, ray.Direction * 1000, params)
+		if result then
+			centerPos = result.Position
+		else
+			centerPos = ray.Origin + ray.Direction * 500
+		end
+	else
+		centerPos = HatReanimator.ClumpCenter or (Player.Character and Player.Character:GetPivot().Position) or Vector3.zero
+	end
+	local targetCF = CFrame.lookAt(centerPos, centerPos + Camera.CFrame.LookVector)
+
+	-- 处理甩飞目标
+	local flingTarget = HatReanimator.FlingTargets[1]
+	if flingTarget then
+		if flingTarget.Time and os.clock() > flingTarget.Time then
+			table.remove(HatReanimator.FlingTargets,1)
+			flingTarget = nil
+		elseif not flingTarget.Time then
+			flingTarget.Time = os.clock() + (flingTarget.Duration or 2)
+		end
+	end
+
+	for _,hat in ipairs(hats) do
+		local handle = hat:FindFirstChild("Handle")
+		if handle and handle:IsA("BasePart") then
+			if flingTarget then
+				-- 甩飞模式：所有帽子飞向目标
+				local targCF = CFrame.lookAt(handle.Position, flingTarget.Target:GetPivot().Position)
+				SetHatCFrameNetless(handle, dt, targCF, true)
+			else
+				-- 普通模式：帽子聚集到中心点，排列成环
+				local index = 0 for i,h in ipairs(hats) do if h==hat then index=i break end end
+				local radius = 2 + index*0.5
+				local angle = (index / #hats) * math.pi*2 + os.clock()*0.5
+				local offset = Vector3.new(math.cos(angle)*radius, math.sin(os.clock()*2)*0.5, math.sin(angle)*radius)
+				local finalCF = targetCF * CFrame.new(offset)
+				SetHatCFrameNetless(handle, dt, finalCF, false)
+			end
+		end
+	end
+end
+
+-- 启动重动画
+function HatReanimator:Start()
+	if self.Enabled then return end
+	self.Enabled = true
+
+	-- 永久死亡
+	if self.Permadeath then
+		PermaDeath()
+	end
+
+	-- 强制所有帽子掉落（通过设置状态）
+	for _,hat in ipairs(GetAllHats()) do
+		SetAccoutrementState(hat, BackendAccoutrementState.InWorkspace)
+		local handle = hat:FindFirstChild("Handle")
+		if handle then
+			handle.CanCollide = self.HatCollide
+		end
+	end
+
+	-- 启动更新循环
+	self.HeartbeatConn = RunService.Heartbeat:Connect(function(dt)
+		UpdateHats(dt)
+	end)
+
+	Util.Notify("帽子分身已激活")
+end
+
+-- 停止重动画
+function HatReanimator:Stop()
+	self.Enabled = false
+	if self.HeartbeatConn then
+		self.HeartbeatConn:Disconnect()
+		self.HeartbeatConn = nil
+	end
+	-- 恢复帽子状态（可选）
+	for _,hat in ipairs(GetAllHats()) do
+		SetAccoutrementState(hat, BackendAccoutrementState.Equipped)
+		local handle = hat:FindFirstChild("Handle")
+		if handle then
+			handle.CanCollide = false
+		end
+	end
+	Util.Notify("帽子分身已停止")
+end
+
+-- 甩飞指定目标
+function HatReanimator:Fling(target, duration)
+	if not self.Enabled then return false end
+	if typeof(target) == "Instance" and target:IsA("Model") then
+		table.insert(self.FlingTargets, {Target=target, Duration=duration})
+		return true
+	end
+	return false
+end
+
+-- 切换碰撞
+function HatReanimator:ToggleCollide(state)
+	self.HatCollide = state
+	for _,hat in ipairs(GetAllHats()) do
+		local handle = hat:FindFirstChild("Handle")
+		if handle then
+			handle.CanCollide = state
+		end
+	end
+end
+
+-- ========== UI控制 ==========
+AddButton("🎩 启动帽子分身", function()
+	HatReanimator:Start()
+end)
+
+AddButton("⏹ 停止分身", function()
+	HatReanimator:Stop()
+end)
+
+AddButton("🎯 甩飞鼠标指向目标", function()
+	local mouse = Player:GetMouse()
+	if mouse.Target then
+		local target = mouse.Target:FindFirstAncestorOfClass("Model") or mouse.Target.Parent
+		if target then
+			HatReanimator:Fling(target, 3)
+			Util.Notify("甩飞目标: "..target.Name)
+		end
+	end
+end)
+
+AddButton("🧹 清除所有甩飞目标", function()
+	table.clear(HatReanimator.FlingTargets)
+	Util.Notify("甩飞队列已清空")
+end)
+
+AddSwitch("🔁 启用碰撞", HatReanimator.HatCollide, function(state)
+	HatReanimator:ToggleCollide(state)
+end)
+
+AddSwitch("🖱 跟随鼠标", HatReanimator.FollowMouse, function(state)
+	HatReanimator.FollowMouse = state
+end)
+
+-- 可选的netless调节滑块
+local sliderContainer = Util.Instance("Frame", Content)
+sliderContainer.Size = UDim2.new(1,-10,0,30)
+sliderContainer.BackgroundTransparency = 1
+local sliderLabel = Util.Instance("TextLabel", sliderContainer)
+sliderLabel.AnchorPoint = Vector2.new(0,0.5)
+sliderLabel.Position = UDim2.new(0,5,0.5,0)
+sliderLabel.Size = UDim2.new(0.4,0,1,0)
+sliderLabel.BackgroundTransparency = 1
+sliderLabel.Text = "Netless速度"
+sliderLabel.TextColor3 = Color3.new(1,1,1)
+sliderLabel.TextSize = 14
+local sliderVal = Util.Instance("TextBox", sliderContainer)
+sliderVal.AnchorPoint = Vector2.new(1,0.5)
+sliderVal.Position = UDim2.new(1,-5,0.5,0)
+sliderVal.Size = UDim2.new(0,50,0,25)
+sliderVal.BackgroundColor3 = Color3.new(0.3,0.3,0.3)
+sliderVal.Text = tostring(HatReanimator.NetlessVelocity)
+sliderVal.TextColor3 = Color3.new(1,1,1)
+sliderVal.TextSize = 14
+sliderVal.BorderSizePixel = 0
+Util.Instance("UICorner", sliderVal).CornerRadius = UDim.new(0,4)
+sliderVal.FocusLost:Connect(function()
+	local n = tonumber(sliderVal.Text)
+	if n then
+		HatReanimator.NetlessVelocity = math.clamp(n, 20, 100)
+		sliderVal.Text = tostring(HatReanimator.NetlessVelocity)
+	end
+end)
+
+-- 注意：部分高级功能（如永久死亡）可能依赖replicatesignal，若不支持则自动降级
+if not replicatesignal then
+	Util.Notify("当前executor不支持永久死亡，部分功能受限")
+	HatReanimator.Permadeath = false
+end
+
+-- 初始隐藏UI（可按需显示）
+MainFrame.Visible = true
+
+-- ========== 使用说明 ==========
+Util.Notify("🎩 帽子分身已加载，拖动/缩放窗口，点击启动")
